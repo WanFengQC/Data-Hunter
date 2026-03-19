@@ -78,6 +78,58 @@ export async function exportPgItemsCsv(params: {
   const { data } = await apiClient.get<Blob>("/pg/export-csv", {
     params: payload,
     responseType: "blob",
+    timeout: 0,
+  });
+  return data;
+}
+
+export interface PgExportJob {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  created_at: string;
+  updated_at: string;
+  file_name?: string | null;
+  file_size?: number | null;
+  error?: string | null;
+}
+
+export async function createPgExportJob(params: {
+  year?: number;
+  month?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  textFilters?: Record<string, string>;
+  valueFilters?: Record<string, string[]>;
+}): Promise<PgExportJob> {
+  const payload: Record<string, unknown> = {
+    year: params.year,
+    month: params.month,
+    sort_by: params.sortBy,
+    sort_dir: params.sortDir,
+  };
+
+  if (params.textFilters && Object.keys(params.textFilters).length > 0) {
+    payload.text_filters = JSON.stringify(params.textFilters);
+  }
+  if (params.valueFilters && Object.keys(params.valueFilters).length > 0) {
+    payload.value_filters = JSON.stringify(params.valueFilters);
+  }
+
+  const { data } = await apiClient.post<PgExportJob>("/pg/export-csv/jobs", null, {
+    params: payload,
+  });
+  return data;
+}
+
+export async function fetchPgExportJob(jobId: string): Promise<PgExportJob> {
+  const { data } = await apiClient.get<PgExportJob>(`/pg/export-csv/jobs/${jobId}`);
+  return data;
+}
+
+export async function downloadPgExportJob(jobId: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(`/pg/export-csv/jobs/${jobId}/download`, {
+    responseType: "blob",
+    timeout: 0,
   });
   return data;
 }

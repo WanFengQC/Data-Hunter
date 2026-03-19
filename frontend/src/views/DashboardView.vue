@@ -212,7 +212,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
-  exportPgItemsCsv,
+  createPgExportJob,
+  downloadPgExportJob,
+  fetchPgExportJob,
   fetchPgFilterOptions,
   fetchPgItems,
   fetchPgYearMonths,
@@ -738,21 +740,47 @@ async function exportFullCsv(): Promise<void> {
   if (!tableTotal.value) return;
   exportLoading.value = true;
   try {
-    const blob = await exportPgItemsCsv({
+    const job = await createPgExportJob({
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
       sortBy: sortBy.value || undefined,
       sortDir: sortDir.value,
       valueFilters: normalizedValueFilters(),
     });
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let fileName = `pg_items_full_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
+    let completed = false;
+
+    for (let i = 0; i < 1800; i += 1) {
+      const state = await fetchPgExportJob(job.job_id);
+      if (state.status === "completed") {
+        if (state.file_name) fileName = state.file_name;
+        completed = true;
+        break;
+      }
+      if (state.status === "failed") {
+        throw new Error(state.error || "导出任务失败");
+      }
+      await sleep(1000);
+    }
+
+    if (!completed) {
+      throw new Error("导出任务超时，请重试");
+    }
+
+    const blob = await downloadPgExportJob(job.job_id);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pg_items_full_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("exportFullCsv failed:", error);
+    alert("导出失败，请稍后重试。");
   } finally {
     exportLoading.value = false;
   }
@@ -801,9 +829,21 @@ watch(sortFieldOptions, (options) => {
 onMounted(async () => {
   loadColumnPrefs();
   document.addEventListener("pointerdown", handleDocumentPointerDown);
-  await loadSummary();
-  await initYearMonthFilters();
-  await loadTable();
+  try {
+    await loadSummary();
+  } catch (error) {
+    console.error("loadSummary failed:", error);
+  }
+  try {
+    await initYearMonthFilters();
+  } catch (error) {
+    console.error("initYearMonthFilters failed:", error);
+  }
+  try {
+    await loadTable();
+  } catch (error) {
+    console.error("loadTable failed:", error);
+  }
   autoReloadReady.value = true;
 });
 

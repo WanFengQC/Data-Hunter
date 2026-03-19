@@ -1,6 +1,10 @@
+import csv
+from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
+from io import StringIO
 from typing import Any
+from uuid import uuid4
 
 import psycopg
 from psycopg import sql
@@ -418,3 +422,86 @@ def fetch_all_items(
         items.append(item)
 
     return {"columns": columns, "items": items, "total": total}
+
+
+def stream_items_csv(
+    schema_name: str,
+    table_name: str,
+    year: int | None = None,
+    month: int | None = None,
+    sort_by: str | None = None,
+    sort_dir: str = "desc",
+    filters: dict[str, str] | None = None,  # backward-compatible alias
+    text_filters: dict[str, str] | None = None,
+    value_filters: dict[str, list[str]] | None = None,
+    chunk_rows: int = 2000,
+) -> Iterator[str]:
+    chunk_rows = max(100, int(chunk_rows or 2000))
+
+    merged_text_filters: dict[str, str] = {}
+    if filters:
+        merged_text_filters.update(filters)
+    if text_filters:
+        merged_text_filters.update(text_filters)
+
+    out = StringIO()
+    writer = csv.writer(out)
+    out.write("\ufeff")
+
+    def flush_buffer() -> str:
+        data = out.getvalue()
+        out.seek(0)
+        out.truncate(0)
+        return data
+
+    with pg_connect() as conn:
+        if not _table_exists(conn, schema_name, table_name):
+            writer.writerow([])
+            yield flush_buffer()
+            return
+
+        column_meta = _get_column_meta(conn, schema_name, table_name)
+        columns = [row["column_name"] for row in column_meta]
+        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
+        valid_columns = set(columns)
+
+        where_sql, where_params = _build_where_sql(
+            year=year,
+            month=month,
+            valid_columns=valid_columns,
+            text_filters=merged_text_filters,
+            value_filters=value_filters,
+        )
+        order_sql = _build_order_sql(
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            valid_columns=valid_columns,
+            column_types=column_types,
+        )
+        data_query = (
+            sql.SQL("SELECT * FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + where_sql
+            + order_sql
+        )
+
+        writer.writerow(columns)
+        yield flush_buffer()
+
+        cursor_name = f"csv_export_{uuid4().hex}"
+        with conn.cursor(name=cursor_name) as cur:
+            cur.itersize = chunk_rows
+            cur.execute(data_query, where_params)
+
+            while True:
+                rows = cur.fetchmany(chunk_rows)
+                if not rows:
+                    break
+
+                for row in rows:
+                    writer.writerow([_serialize_value(row.get(col)) for col in columns])
+
+                chunk = flush_buffer()
+                if chunk:
+                    yield chunk

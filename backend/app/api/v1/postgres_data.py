@@ -1,15 +1,16 @@
 import json
-from io import StringIO
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import settings
+from app.services.export_jobs import pg_export_jobs
 from app.services.postgres_table import (
-    fetch_all_items,
     fetch_filter_options,
     fetch_items,
+    stream_items_csv,
     fetch_year_months,
 )
 
@@ -82,6 +83,70 @@ def list_filter_options(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/export-csv/jobs")
+def create_export_job(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    sort_by: str | None = Query(default=None),
+    sort_dir: str = Query(default="desc"),
+    filters: str | None = Query(default=None),
+    text_filters: str | None = Query(default=None),
+    value_filters: str | None = Query(default=None),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default=settings.pg_table),
+) -> dict:
+    try:
+        merged_text_filters: dict[str, str] = {}
+        merged_text_filters.update(_parse_text_filters(filters))
+        merged_text_filters.update(_parse_text_filters(text_filters))
+        parsed_value_filters = _parse_value_filters(value_filters)
+
+        job = pg_export_jobs.create_job(
+            {
+                "schema_name": schema,
+                "table_name": table,
+                "year": year,
+                "month": month,
+                "sort_by": sort_by,
+                "sort_dir": sort_dir.lower(),
+                "text_filters": merged_text_filters,
+                "value_filters": parsed_value_filters,
+            }
+        )
+        return job
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid filters JSON: {exc}") from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/export-csv/jobs/{job_id}")
+def get_export_job(job_id: str) -> dict:
+    job = pg_export_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    return job
+
+
+@router.get("/export-csv/jobs/{job_id}/download")
+def download_export_job(job_id: str):
+    job = pg_export_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Export job is not completed yet")
+
+    file_path = pg_export_jobs.get_job_file_path(job_id)
+    if not file_path or not Path(file_path).exists():
+        raise HTTPException(status_code=410, detail="Export file has expired or is missing")
+
+    return FileResponse(
+        path=file_path,
+        media_type="text/csv; charset=utf-8",
+        filename=str(job.get("file_name") or f"{job_id}.csv"),
+    )
+
+
 @router.get("/items")
 def list_pg_items(
     year: int | None = Query(default=None, ge=2000, le=2100),
@@ -135,14 +200,12 @@ def export_pg_csv(
     table: str = Query(default=settings.pg_table),
 ):
     try:
-        import csv
-
         merged_text_filters: dict[str, str] = {}
         merged_text_filters.update(_parse_text_filters(filters))
         merged_text_filters.update(_parse_text_filters(text_filters))
         parsed_value_filters = _parse_value_filters(value_filters)
 
-        result = fetch_all_items(
+        stream = stream_items_csv(
             schema_name=schema,
             table_name=table,
             year=year,
@@ -153,22 +216,11 @@ def export_pg_csv(
             value_filters=parsed_value_filters,
         )
 
-        columns = result.get("columns", [])
-        rows = result.get("items", [])
-
-        sio = StringIO()
-        sio.write("\ufeff")
-        writer = csv.writer(sio)
-        writer.writerow(columns)
-        for row in rows:
-            writer.writerow([row.get(col, "") for col in columns])
-        sio.seek(0)
-
         ym = f"{year or 'all'}_{month or 'all'}"
         filename = f"pg_items_full_{ym}.csv"
         headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
         return StreamingResponse(
-            iter([sio.getvalue()]),
+            stream,
             media_type="text/csv; charset=utf-8",
             headers=headers,
         )

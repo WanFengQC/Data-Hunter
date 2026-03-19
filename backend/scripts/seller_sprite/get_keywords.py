@@ -33,7 +33,7 @@ def get_env_float(name, default):
 
 
 BASE_DIR = Path(__file__).resolve().parent
-INPUT_DIR = BASE_DIR / "ara_202512"
+INPUT_DIR = BASE_DIR / "ara_202602"
 OUTPUT_FILE = INPUT_DIR / "word_frequency_analysis.csv"
 
 TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
