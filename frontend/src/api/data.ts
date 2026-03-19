@@ -53,6 +53,35 @@ export async function fetchPgItems(params: {
   return data;
 }
 
+export async function exportPgItemsCsv(params: {
+  year?: number;
+  month?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  textFilters?: Record<string, string>;
+  valueFilters?: Record<string, string[]>;
+}): Promise<Blob> {
+  const payload: Record<string, unknown> = {
+    year: params.year,
+    month: params.month,
+    sort_by: params.sortBy,
+    sort_dir: params.sortDir,
+  };
+
+  if (params.textFilters && Object.keys(params.textFilters).length > 0) {
+    payload.text_filters = JSON.stringify(params.textFilters);
+  }
+  if (params.valueFilters && Object.keys(params.valueFilters).length > 0) {
+    payload.value_filters = JSON.stringify(params.valueFilters);
+  }
+
+  const { data } = await apiClient.get<Blob>("/pg/export-csv", {
+    params: payload,
+    responseType: "blob",
+  });
+  return data;
+}
+
 export async function fetchPgFilterOptions(params: {
   column: string;
   year?: number;

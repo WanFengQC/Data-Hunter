@@ -1,6 +1,8 @@
 import json
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -16,15 +18,32 @@ from deepseek_classify_batch import classify_with_cache, client as deepseek_clie
 # 配置
 # =========================
 
-INPUT_DIR = Path("ara_202512/test")
-OUTPUT_FILE = "ara_202512/test/word_frequency_analysis.csv"
+def get_env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
-TRANSLATION_CACHE_FILE = Path("translation_cache.json")
-OBJECT_CACHE_FILE = Path("object_category_cache.json")
-PLUSHABLE_CACHE_FILE = Path("plushable_cache.json")
 
-BATCH_SIZE = 50
-DEEPSEEK_BATCH_SIZE = 20
+def get_env_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+BASE_DIR = Path(__file__).resolve().parent
+INPUT_DIR = BASE_DIR / "ara_202512"
+OUTPUT_FILE = INPUT_DIR / "word_frequency_analysis.csv"
+
+TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
+OBJECT_CACHE_FILE = BASE_DIR / "object_category_cache.json"
+PLUSHABLE_CACHE_FILE = BASE_DIR / "plushable_cache.json"
+
+BATCH_SIZE = get_env_int("TRANSLATE_BATCH_SIZE", 100)
+TRANSLATE_WORKERS = get_env_int("TRANSLATE_WORKERS", 4)
+TRANSLATE_SLEEP_SECONDS = get_env_float("TRANSLATE_SLEEP_SECONDS", 0)
+DEEPSEEK_BATCH_SIZE = get_env_int("DEEPSEEK_BATCH_SIZE", 500)
 TO_LOWER = True
 REMOVE_STOPWORDS = True
 
@@ -157,13 +176,20 @@ def load_cache(file_path):
         return {}
 
     try:
-        return json.loads(file_path.read_text(encoding="utf-8"))
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k).strip().lower(): v for k, v in raw.items()}
     except Exception:
         return {}
 
 
 def save_cache(cache, file_path):
     file_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def normalize_cache_key(word):
+    return str(word).strip().lower()
 
 
 # =========================
@@ -179,19 +205,20 @@ def classify_words(words, pos_map):
 
     for word in words:
         pos = pos_map[word]
+        cache_key = normalize_cache_key(word)
 
         if not pos.startswith("NN"):
             result[word] = "非名词"
             continue
 
-        if word in cache:
-            result[word] = cache[word]
+        if cache_key in cache:
+            result[word] = cache[cache_key]
             continue
 
         category = wordnet_classify(word)
         if category:
             result[word] = category
-            cache[word] = category
+            cache[cache_key] = category
             continue
 
         need_ai.append(word)
@@ -202,7 +229,10 @@ def classify_words(words, pos_map):
         ai_result = classify_with_cache(need_ai)
 
         for word in need_ai:
-            result[word] = ai_result.get(word, "物体")
+            cache_key = normalize_cache_key(word)
+            decision = ai_result.get(word, ai_result.get(cache_key, "物体"))
+            result[word] = decision
+            cache[cache_key] = decision
 
     save_cache(cache, OBJECT_CACHE_FILE)
     return result
@@ -314,8 +344,9 @@ def classify_plushable(words):
     need_ai = []
 
     for word in words:
-        if word in cache:
-            result[word] = normalize_plushable(cache[word])
+        cache_key = normalize_cache_key(word)
+        if cache_key in cache:
+            result[word] = normalize_plushable(cache[cache_key])
         else:
             need_ai.append(word)
 
@@ -326,9 +357,10 @@ def classify_plushable(words):
         batch_result = classify_plushable_batch(batch)
 
         for word in batch:
+            cache_key = normalize_cache_key(word)
             decision = normalize_plushable(batch_result.get(word, "否"))
             result[word] = decision
-            cache[word] = decision
+            cache[cache_key] = decision
 
         save_cache(cache, PLUSHABLE_CACHE_FILE)
         print("DeepSeek plush progress:", index + len(batch), "/", len(need_ai))
@@ -345,35 +377,59 @@ def classify_plushable(words):
 
 def translate(words):
     cache = load_cache(TRANSLATION_CACHE_FILE)
-    translator = GoogleTranslator(source="en", target="zh-CN")
 
     result = {}
     need = []
 
     for word in words:
-        if word in cache:
-            result[word] = cache[word]
+        cache_key = normalize_cache_key(word)
+        if cache_key in cache:
+            result[word] = cache[cache_key]
         else:
             need.append(word)
 
     print("翻译待处理:", len(need))
 
-    for index in range(0, len(need), BATCH_SIZE):
-        batch = need[index : index + BATCH_SIZE]
-
+    def translate_batch_worker(batch_words):
+        translator = GoogleTranslator(source="en", target="zh-CN")
         try:
-            translated = translator.translate_batch(batch)
+            translated = translator.translate_batch(batch_words)
         except Exception:
-            translated = [""] * len(batch)
+            translated = [""] * len(batch_words)
 
-        for word, zh in zip(batch, translated):
-            result[word] = zh
-            cache[word] = zh
+        if not isinstance(translated, list):
+            translated = [""] * len(batch_words)
+        if len(translated) < len(batch_words):
+            translated.extend([""] * (len(batch_words) - len(translated)))
 
-        save_cache(cache, TRANSLATION_CACHE_FILE)
-        print("翻译进度:", index + len(batch), "/", len(need))
+        return {word: zh for word, zh in zip(batch_words, translated)}
 
-        time.sleep(0.2)
+    batches = [need[i : i + BATCH_SIZE] for i in range(0, len(need), BATCH_SIZE)]
+    workers = max(1, TRANSLATE_WORKERS)
+    done_count = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_batch = {executor.submit(translate_batch_worker, batch): batch for batch in batches}
+
+        for future in as_completed(future_to_batch):
+            batch = future_to_batch[future]
+            try:
+                batch_map = future.result()
+            except Exception:
+                batch_map = {word: "" for word in batch}
+
+            for word in batch:
+                cache_key = normalize_cache_key(word)
+                zh = batch_map.get(word, "")
+                result[word] = zh
+                cache[cache_key] = zh
+
+            done_count += len(batch)
+            save_cache(cache, TRANSLATION_CACHE_FILE)
+            print("翻译进度:", done_count, "/", len(need))
+
+            if TRANSLATE_SLEEP_SECONDS > 0:
+                time.sleep(TRANSLATE_SLEEP_SECONDS)
 
     return result
 

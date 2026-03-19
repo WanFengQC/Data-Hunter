@@ -39,11 +39,23 @@
               </option>
             </select>
           </label>
-          <button class="secondary-btn" @click="reloadTable" :disabled="tableLoading">
-            {{ tableLoading ? "加载中..." : "查询" }}
-          </button>
-          <button class="secondary-btn" @click="exportCurrentPageCsv" :disabled="!tableRows.length">
-            导出当前页 CSV
+          <label>
+            排序字段
+            <select v-model="sortBy">
+              <option v-for="col in sortFieldOptions" :key="`sort-${col}`" :value="col">
+                {{ columnLabel(col) }}
+              </option>
+            </select>
+          </label>
+          <label>
+            排序方向
+            <select v-model="sortDir">
+              <option value="asc">升序</option>
+              <option value="desc">降序</option>
+            </select>
+          </label>
+          <button class="secondary-btn" @click="exportFullCsv" :disabled="!tableTotal || exportLoading">
+            {{ exportLoading ? "导出中..." : "导出完整 CSV" }}
           </button>
         </div>
       </div>
@@ -67,7 +79,7 @@
       <div class="table-meta">
         <span>总数: {{ tableTotal }}</span>
         <span>页码: {{ tablePage }}</span>
-        <span v-if="sortBy">排序: {{ columnLabel(sortBy) }} {{ sortDir.toUpperCase() }}</span>
+        <span v-if="sortBy">排序: {{ columnLabel(sortBy) }} {{ sortDir === "asc" ? "升序" : "降序" }}</span>
         <span>表头长按后可左右拖动换列</span>
       </div>
 
@@ -75,6 +87,7 @@
         <table class="data-table">
           <thead>
             <tr>
+              <th class="serial-col">序号</th>
               <th
                 v-for="col in displayColumns"
                 :key="`head-${col}`"
@@ -85,11 +98,9 @@
                   'filtered-col': isColumnValueFiltered(col),
                 }"
                 @pointerdown="onHeaderPointerDown(col, $event)"
-                @click="onHeaderClick(col)"
               >
                 <div class="th-inner">
                   <span :title="col">{{ columnLabel(col) }}</span>
-                  <span v-if="sortBy === col">{{ sortDir === "asc" ? "▲" : "▼" }}</span>
                   <button
                     class="filter-btn"
                     :class="{ active: isColumnValueFiltered(col) }"
@@ -105,9 +116,10 @@
           </thead>
           <tbody>
             <tr v-if="!tableRows.length">
-              <td :colspan="Math.max(displayColumns.length, 1)">暂无数据</td>
+              <td :colspan="Math.max(displayColumns.length + 1, 1)">暂无数据</td>
             </tr>
             <tr v-for="(row, idx) in tableRows" :key="idx">
+              <td class="serial-col">{{ getRowSerial(idx) }}</td>
               <td
                 v-for="col in displayColumns"
                 :key="`${idx}-${col}`"
@@ -177,6 +189,10 @@
       </div>
 
       <div class="pagination">
+        <label class="rows-control">
+          显示行数
+          <input v-model.number="tablePageSize" type="number" min="1" step="1" />
+        </label>
         <button class="secondary-btn" @click="prevPage" :disabled="tablePage <= 1 || tableLoading">
           上一页
         </button>
@@ -196,6 +212,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
+  exportPgItemsCsv,
   fetchPgFilterOptions,
   fetchPgItems,
   fetchPgYearMonths,
@@ -210,6 +227,7 @@ const COLUMN_PREFS_KEY = "data_hunter.pg.column_prefs.v1";
 const LONG_PRESS_MS = 220;
 
 const EXCLUDED_COLUMNS = new Set([
+  "id",
   "source_folder",
   "source_file",
   "page_no",
@@ -268,6 +286,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const loading = ref(false);
+const exportLoading = ref(false);
 const summary = ref<ProcessedSummary>({ generated_at: null, categories: [] });
 
 const tableLoading = ref(false);
@@ -275,7 +294,8 @@ const tableColumns = ref<string[]>([]);
 const tableRows = ref<Record<string, unknown>[]>([]);
 const tableTotal = ref(0);
 const tablePage = ref(1);
-const tablePageSize = 20;
+const tablePageSize = ref(20);
+const autoReloadReady = ref(false);
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -309,7 +329,6 @@ const filterOptions = ref<PgFilterOption[]>([]);
 const workingFilterValues = ref<string[]>([]);
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-let suppressClick = false;
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
 
 const totalCount = computed(() => summary.value.categories.reduce((sum, row) => sum + row.count, 0));
@@ -336,6 +355,12 @@ const monthOptions = computed(() => {
 });
 
 const availableColumns = computed(() => tableColumns.value.filter((c) => !EXCLUDED_COLUMNS.has(c)));
+
+const sortFieldOptions = computed(() => {
+  const cols = [...availableColumns.value];
+  if (!cols.includes("id")) cols.unshift("id");
+  return cols;
+});
 
 const displayColumns = computed(() => {
   if (!visibleColumns.value.length) return availableColumns.value;
@@ -478,14 +503,12 @@ function onHeaderPointerDown(col: string, event: PointerEvent): void {
   const startX = event.clientX;
   const startY = event.clientY;
 
-  suppressClick = false;
   longPressTimer = setTimeout(() => {
     draggingCol.value = col;
     dragGhost.value.active = true;
     dragGhost.value.width = Math.max(180, Math.min(380, width));
     updateGhostPosition(startX, startY);
     updateInsertPreview(startX);
-    suppressClick = true;
     document.body.classList.add("col-dragging-mode");
   }, LONG_PRESS_MS);
 
@@ -509,21 +532,10 @@ function onGlobalPointerUp(): void {
 
   if (dragGhost.value.active && draggingCol.value && dropIndex.value !== null) {
     moveColumnToInsertIndex(draggingCol.value, dropIndex.value);
-    setTimeout(() => {
-      suppressClick = false;
-    }, 0);
   }
 
   clearDragState();
   cleanupDragHandlers();
-}
-
-function onHeaderClick(col: string): void {
-  if (suppressClick) {
-    suppressClick = false;
-    return;
-  }
-  toggleSort(col);
 }
 
 async function loadSummary(): Promise<void> {
@@ -563,6 +575,10 @@ function formatCell(value: unknown): string {
   return text.length > 80 ? `${text.slice(0, 80)}...` : text;
 }
 
+function getRowSerial(idx: number): number {
+  return (tablePage.value - 1) * tablePageSize.value + idx + 1;
+}
+
 function normalizedValueFilters(): Record<string, string[]> {
   const output: Record<string, string[]> = {};
   for (const [key, values] of Object.entries(valueFilters.value)) {
@@ -578,7 +594,7 @@ async function loadTable(): Promise<void> {
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
       page: tablePage.value,
-      pageSize: tablePageSize,
+      pageSize: tablePageSize.value,
       sortBy: sortBy.value || undefined,
       sortDir: sortDir.value,
       valueFilters: normalizedValueFilters(),
@@ -597,19 +613,8 @@ async function reloadTable(): Promise<void> {
   await loadTable();
 }
 
-function toggleSort(col: string): void {
-  if (col === "id") {
-    sortBy.value = "id";
-    sortDir.value = "asc";
-    void reloadTable();
-    return;
-  }
-  if (sortBy.value === col) {
-    sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
-  } else {
-    sortBy.value = col;
-    sortDir.value = "asc";
-  }
+function triggerRealtimeReload(): void {
+  if (!autoReloadReady.value) return;
   void reloadTable();
 }
 
@@ -729,21 +734,28 @@ function handleDocumentPointerDown(event: PointerEvent): void {
   closeFilterMenu();
 }
 
-function exportCurrentPageCsv(): void {
-  if (!tableRows.value.length || !displayColumns.value.length) return;
-  const escapeCell = (raw: unknown): string => `"${cellToText(raw).replace(/"/g, '""')}"`;
-  const header = displayColumns.value.map((c) => `"${columnLabel(c).replace(/"/g, '""')}"`).join(",");
-  const lines = tableRows.value.map((row) => displayColumns.value.map((col) => escapeCell(row[col])).join(","));
-  const csv = [header, ...lines].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `pg_items_${selectedYear.value || "all"}_${selectedMonth.value || "all"}_p${tablePage.value}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+async function exportFullCsv(): Promise<void> {
+  if (!tableTotal.value) return;
+  exportLoading.value = true;
+  try {
+    const blob = await exportPgItemsCsv({
+      year: selectedYear.value || undefined,
+      month: selectedMonth.value || undefined,
+      sortBy: sortBy.value || undefined,
+      sortDir: sortDir.value,
+      valueFilters: normalizedValueFilters(),
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pg_items_full_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } finally {
+    exportLoading.value = false;
+  }
 }
 
 async function prevPage(): Promise<void> {
@@ -753,7 +765,7 @@ async function prevPage(): Promise<void> {
 }
 
 async function nextPage(): Promise<void> {
-  if (tablePage.value * tablePageSize >= tableTotal.value) return;
+  if (tablePage.value * tablePageSize.value >= tableTotal.value) return;
   tablePage.value += 1;
   await loadTable();
 }
@@ -761,6 +773,28 @@ async function nextPage(): Promise<void> {
 watch(selectedYear, () => {
   if (selectedMonth.value !== 0 && !monthOptions.value.includes(selectedMonth.value)) {
     selectedMonth.value = 0;
+    return;
+  }
+  triggerRealtimeReload();
+});
+
+watch([selectedMonth, sortBy, sortDir], () => {
+  triggerRealtimeReload();
+});
+
+watch(tablePageSize, (next) => {
+  const normalized = Math.max(1, Math.trunc(Number(next) || 1));
+  if (normalized !== next) {
+    tablePageSize.value = normalized;
+    return;
+  }
+  triggerRealtimeReload();
+});
+
+watch(sortFieldOptions, (options) => {
+  if (!options.length) return;
+  if (!options.includes(sortBy.value)) {
+    sortBy.value = options.includes("id") ? "id" : options[0];
   }
 });
 
@@ -770,6 +804,7 @@ onMounted(async () => {
   await loadSummary();
   await initYearMonthFilters();
   await loadTable();
+  autoReloadReady.value = true;
 });
 
 onBeforeUnmount(() => {

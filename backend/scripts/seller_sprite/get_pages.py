@@ -19,21 +19,21 @@ cookies = {
     'p_c_size': '50',
     'f406f3cf90e7c11a8569': '773812463fbe5203f1dc781974f13535',
     '_fp': '6bdb7315c2b18cd40408207b8baba3a9',
-    '_clck': '1flo5tj%5E2%5Eg4g%5E0%5E2190',
     '7ba84d0b95f668d77aff': '8e047504da5b4d64dc49bd1815cc7daa',
     '6b7146199ef392cb4449': '2dc923726476977ee4c5fef1731e30ed',
     'Hm_lvt_e0dfc78949a2d7c553713cb5c573a486': '1773740929,1773797927',
     'HMACCOUNT': 'DB02FE95993721CC',
     '_gcl_au': '1.1.1318762765.1773740930.651287507.1773822643.1773822643',
-    '_gaf_fp': '7073f7be342b8f0c3b32ba804a94f3a2',
-    'rank-login-user': '3720883771/hRwrRCKBLGVx+hTs3aSuSZTx9/ASka6ax9QFnqlokTCq//VtZ8htBcujtKbNMsu',
-    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjM3MjA4ODM3NzEvaFJ3clJDS0JMR1Z4K2hUczNhU3VTWlR4OS9BU2thNmF4OVFGbnFsb2tUQ3EvL1Z0WjhodEJjdWp0S2JOTXN1In0="',
-    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJ6TEpRdndSc25EaFBvYWt5SHlKN3pRIiwiaWF0IjoxNzczODIyNjczLCJleHAiOjE3NzM5MDkwNzMsIm5iZiI6MTc3MzgyMjYxMywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IkcifQ.CIXXn6I0W20eDxJmDMybzLTHSyALwheDZzEfTNJrJRxaSBBwPQ4FLvC0MWpPZxEA2JjTFuh7-ikvsILyBwXYdM8P3n6uf34UaQCo5S6P0FBPopo4XQI-DO1ORHKEMpkB3WZGTfAVxXByMKRvZnOvzn_CSJabtXXAe943Ht50bmSI88arU0YM8ErrDc3-7gJ7EkBL6Ju5uE3-ImhlF365eIl9FOs3B_CpAlMHM0jl3Bs0StKjRoIqG4RH4BCGGRoLD3aOi5xhaOVm55OEwhx5vxpj4TCTXM6SQzZv45kF8yoF4paia-FLoZTdtUaCILKGlNELXrYiLWdK61emzP5H0Q',
-    'JSESSIONID': 'BDB1FC97633F9ADA9DD73B460A2CBADE',
-    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773822700',
-    '_ga_CN0F80S6GL': 'GS2.1.s1773820082$o17$g1$t1773822713$j46$l0$h0',
-    '_clsk': 'apai2h%5E1773822814542%5E41%5E1%5Eo.clarity.ms%2Fcollect',
-    '_ga_38NCVF2XST': 'GS2.1.s1773820082$o19$g1$t1773822814$j25$l0$h1187695156',
+    '_clck': '1flo5tj%5E2%5Eg4h%5E0%5E2190',
+    '_gaf_fp': 'afb29b5d02f3e1efa2d19f7de3839a5e',
+    'rank-login-user': '5849493771f0Dc4PNRqqKvGsaAPIh5JCJN+HdNk539K4hHyCjRNHXLwC6kYf1oex70zrhNTtIe',
+    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjU4NDk0OTM3NzFmMERjNFBOUnFxS3ZHc2FBUEloNUpDSk4rSGROazUzOUs0aEh5Q2pSTkhYTHdDNmtZZjFvZXg3MHpyaE5UdEllIn0="',
+    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJ1ZUpNTllYb3pOWmN5OERtMWpTdEhBIiwiaWF0IjoxNzczODkxODg1LCJleHAiOjE3NzM5NzgyODUsIm5iZiI6MTc3Mzg5MTgyNSwic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IlMiLCJlbmQiOjE3NzQyMzc0ODU1MTR9.a8s4fmw5NnwekT7A9BOlT8mZoRavzPCpe-nNSXRh3ovTwDi844Ze6Ypm2mwOULIm-CLNr8BkURaHZJL0mSgTCRZ2zr5T15sAYdhEC_cZlEBIYkBXu2jMYk0gOhVqr6a0JXiCBU97XheiwnDUR9Gzlgdgar9QvSiP3SM98DqNk4AesxgfIck-gwEGpALrZn4WQ7GO-uLgyl6Ox2POx0aE9C0hGdMB8HkXVNxUqAEK0yBMx_wG491QykqSa4VOsScPiBjjVcPye-S1BOp7IENwQ14FwcA9u55NGmWmQCFRXmaqK5ltZ8DUDqjf_syDlnj18mZS-zAGhNhZgpH9I34Lig',
+    'JSESSIONID': '0B804F77BF2E58D5A2DC167DD668B10B',
+    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773893655',
+    '_ga_CN0F80S6GL': 'GS2.1.s1773890563$o19$g1$t1773893665$j50$l0$h0',
+    '_clsk': 'mquxhf%5E1773893669693%5E19%5E0%5Ez.clarity.ms%2Fcollect',
+    '_ga_38NCVF2XST': 'GS2.1.s1773890563$o21$g1$t1773893723$j60$l0$h1131638019',
 }
 
 headers = {
@@ -62,7 +62,7 @@ json_data = {
     'movementMarket': '',
     'market': 'COM',
     'q': '',
-    'table': 'ara_202511',
+    'table': 'ara_202510',
     'reverseType': 'M',
     'departments': [
         'toys-and-games',
@@ -75,19 +75,16 @@ json_data = {
 }
 
 url = 'https://www.sellersprite.com/v3/api/aba-research'
-save_dir = 'ara_202511'
+save_dir = 'ara_202510'
 
 os.makedirs(save_dir, exist_ok=True)
 
 
 def pause_program():
     try:
-        os.system('pause')
+        input('程序已暂停，按回车退出...')
     except Exception:
-        try:
-            input('程序已暂停，按回车退出...')
-        except Exception:
-            pass
+        pass
 
 
 def stop_program(msg=''):
@@ -203,7 +200,7 @@ def main():
         fetch_and_save(page)
         print(f'Saved {file_path}')
 
-        random_time = random.uniform(2.0, 5.0)
+        random_time = random.uniform(1.00, 3.00)
         print(f'休息{random_time:.2f}s')
         time.sleep(random_time)
 
@@ -222,3 +219,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    

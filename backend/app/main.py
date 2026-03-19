@@ -1,7 +1,13 @@
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+
+# Allow running this file directly: `python backend/app/main.py`.
+if __package__ in (None, ""):
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.v1.router import api_router
 from app.core.config import settings

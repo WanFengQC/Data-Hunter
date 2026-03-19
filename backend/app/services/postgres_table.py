@@ -163,6 +163,22 @@ def _build_where_sql(
     return sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses), params
 
 
+def _build_order_sql(
+    sort_by: str | None,
+    sort_dir: str,
+    valid_columns: set[str],
+    column_types: dict[str, str],
+) -> sql.SQL:
+    direction = sql.SQL("ASC") if str(sort_dir).lower() == "asc" else sql.SQL("DESC")
+    if sort_by and sort_by in valid_columns:
+        if column_types.get(sort_by) == "jsonb":
+            order_expr = sql.SQL("CAST({} AS TEXT)").format(sql.Identifier(sort_by))
+        else:
+            order_expr = sql.Identifier(sort_by)
+        return sql.SQL(" ORDER BY {} {} NULLS LAST").format(order_expr, direction)
+    return sql.SQL(" ORDER BY year_month DESC, id DESC")
+
+
 def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
     query = sql.SQL(
         "SELECT DISTINCT year_month FROM {}.{} "
@@ -263,7 +279,7 @@ def fetch_items(
     value_filters: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     page = max(page, 1)
-    page_size = min(max(page_size, 1), 200)
+    page_size = max(page_size, 1)
     offset = (page - 1) * page_size
 
     merged_text_filters: dict[str, str] = {}
@@ -289,15 +305,12 @@ def fetch_items(
             value_filters=value_filters,
         )
 
-        direction = sql.SQL("ASC") if str(sort_dir).lower() == "asc" else sql.SQL("DESC")
-        if sort_by and sort_by in valid_columns:
-            if column_types.get(sort_by) == "jsonb":
-                order_expr = sql.SQL("CAST({} AS TEXT)").format(sql.Identifier(sort_by))
-            else:
-                order_expr = sql.Identifier(sort_by)
-            order_sql = sql.SQL(" ORDER BY {} {} NULLS LAST").format(order_expr, direction)
-        else:
-            order_sql = sql.SQL(" ORDER BY year_month DESC, id DESC")
+        order_sql = _build_order_sql(
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            valid_columns=valid_columns,
+            column_types=column_types,
+        )
 
         count_query = (
             sql.SQL("SELECT COUNT(*) AS total FROM {}.{}").format(
@@ -335,3 +348,73 @@ def fetch_items(
         "page": page,
         "page_size": page_size,
     }
+
+
+def fetch_all_items(
+    schema_name: str,
+    table_name: str,
+    year: int | None = None,
+    month: int | None = None,
+    sort_by: str | None = None,
+    sort_dir: str = "desc",
+    filters: dict[str, str] | None = None,  # backward-compatible alias
+    text_filters: dict[str, str] | None = None,
+    value_filters: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    merged_text_filters: dict[str, str] = {}
+    if filters:
+        merged_text_filters.update(filters)
+    if text_filters:
+        merged_text_filters.update(text_filters)
+
+    with pg_connect() as conn:
+        if not _table_exists(conn, schema_name, table_name):
+            return {"columns": [], "items": [], "total": 0}
+
+        column_meta = _get_column_meta(conn, schema_name, table_name)
+        columns = [row["column_name"] for row in column_meta]
+        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
+        valid_columns = set(columns)
+
+        where_sql, where_params = _build_where_sql(
+            year=year,
+            month=month,
+            valid_columns=valid_columns,
+            text_filters=merged_text_filters,
+            value_filters=value_filters,
+        )
+        order_sql = _build_order_sql(
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            valid_columns=valid_columns,
+            column_types=column_types,
+        )
+
+        count_query = (
+            sql.SQL("SELECT COUNT(*) AS total FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + where_sql
+        )
+        data_query = (
+            sql.SQL("SELECT * FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + where_sql
+            + order_sql
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(count_query, where_params)
+            total = int(cur.fetchone()["total"])
+            cur.execute(data_query, where_params)
+            rows = cur.fetchall()
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item: dict[str, Any] = {}
+        for key, value in row.items():
+            item[key] = _serialize_value(value)
+        items.append(item)
+
+    return {"columns": columns, "items": items, "total": total}

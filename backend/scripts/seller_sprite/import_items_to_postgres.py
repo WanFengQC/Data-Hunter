@@ -21,7 +21,7 @@ REPO_DIR = BACKEND_DIR.parent
 # =========================
 # If CLI args `--folder/--folders` are not provided, these folders will be used.
 # Example: ["ara_202512"] or ["ara_202512", "ara_202601"]
-IMPORT_FOLDERS: list[str] = ["ara_202512"]
+IMPORT_FOLDERS: list[str] = ["ara_202601","ara_202602"]
 
 
 def load_env_files() -> None:

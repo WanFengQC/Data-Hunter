@@ -132,6 +132,14 @@ body {
   background: #fff;
 }
 
+.table-filters input {
+  min-width: 100px;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
 .secondary-btn {
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -255,8 +263,24 @@ body {
   z-index: 1;
 }
 
+.data-table th.serial-col {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: #f8fafc;
+  min-width: 72px;
+}
+
+.data-table td.serial-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
 .sortable-header {
-  cursor: pointer;
+  cursor: default;
   user-select: none;
   touch-action: none;
 }
@@ -459,6 +483,25 @@ body.col-dragging-mode {
   margin-top: 0.8rem;
   display: flex;
   gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.rows-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: #374151;
+  margin-right: 0.4rem;
+}
+
+.rows-control input {
+  width: 110px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
 }
 
 @media (max-width: 768px) {
