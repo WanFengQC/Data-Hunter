@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     pg_pass: str = "123456"
     pg_port: int = 5432
     pg_db: str = "hunter"
+    pg_schema: str = "public"
+    pg_table: str = "seller_sprite_items"
 
     crawler_source_url: str = "https://jsonplaceholder.typicode.com/posts"
     crawler_timeout: int = 30

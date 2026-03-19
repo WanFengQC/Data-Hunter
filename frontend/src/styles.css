@@ -89,6 +89,378 @@ body {
   height: 360px;
 }
 
+.table-panel {
+  margin-top: 1.5rem;
+  border-radius: 14px;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #dbeafe;
+}
+
+.table-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.table-panel-header h2 {
+  margin: 0;
+}
+
+.table-filters {
+  display: flex;
+  gap: 0.75rem;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.table-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.table-filters select {
+  min-width: 100px;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+.secondary-btn {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.table-meta {
+  margin-top: 0.8rem;
+  display: flex;
+  gap: 1rem;
+  color: #4b5563;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.column-manager {
+  margin-top: 0.8rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+}
+
+.column-manager summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.column-actions {
+  margin-top: 0.6rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.column-list {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.column-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.column-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.column-item label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-move {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.tiny-btn {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+}
+
+.tiny-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.table-wrap {
+  margin-top: 0.8rem;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  position: relative;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 1000px;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.6rem;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 1;
+}
+
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+
+.th-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sortable-header span:last-child {
+  margin-left: 0.35rem;
+}
+
+.drag-source-col {
+  opacity: 0.35;
+  filter: blur(1.2px);
+}
+
+.filtered-col {
+  background: #eff6ff !important;
+}
+
+.filter-btn {
+  margin-left: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.2rem 0.3rem;
+  cursor: pointer;
+}
+
+.filter-btn.active {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+body.col-dragging-mode {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.column-insert-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, #1d4ed8, #0ea5e9);
+  box-shadow: 0 0 8px rgba(29, 78, 216, 0.35);
+  pointer-events: none;
+  z-index: 6;
+  border-radius: 999px;
+}
+
+.column-drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 50;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+
+.column-drag-ghost-header {
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1e3a8a;
+  background: rgba(219, 234, 254, 0.9);
+  border-bottom: 1px solid #dbeafe;
+}
+
+.column-drag-ghost-cell {
+  padding: 0.44rem 0.65rem;
+  font-size: 0.78rem;
+  color: #334155;
+  border-bottom: 1px solid #eff6ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-drag-ghost-cell:last-child {
+  border-bottom: none;
+}
+
+.excel-filter-pop {
+  position: fixed;
+  z-index: 70;
+  width: 320px;
+  max-height: 70vh;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.excel-filter-title {
+  padding: 0.65rem 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.excel-filter-search {
+  margin: 0.6rem 0.75rem 0;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.excel-filter-actions {
+  margin: 0.55rem 0.75rem 0;
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.excel-filter-list {
+  margin: 0.6rem 0.75rem 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: auto;
+  min-height: 140px;
+  max-height: 320px;
+}
+
+.excel-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.84rem;
+}
+
+.excel-filter-option:last-child {
+  border-bottom: none;
+}
+
+.option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.option-count {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.excel-filter-empty {
+  padding: 0.8rem;
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+
+.excel-filter-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.primary-btn.small {
+  margin-top: 0;
+  padding: 0.45rem 0.8rem;
+}
+
+.filter-row th {
+  background: #fff;
+}
+
+.filter-row input {
+  width: 100%;
+  min-width: 100px;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  background: #fff;
+}
+
+.pagination {
+  margin-top: 0.8rem;
+  display: flex;
+  gap: 0.6rem;
+}
+
 @media (max-width: 768px) {
   .dashboard {
     padding: 1rem 0.75rem 2rem;
@@ -96,5 +468,9 @@ body {
 
   .chart {
     height: 280px;
+  }
+
+  .table-panel-header {
+    align-items: flex-start;
   }
 }
