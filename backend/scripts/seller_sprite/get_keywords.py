@@ -33,8 +33,8 @@ def get_env_float(name, default):
 
 
 BASE_DIR = Path(__file__).resolve().parent
-INPUT_DIR = BASE_DIR / "ara_202602"
-OUTPUT_FILE = INPUT_DIR / "word_frequency_analysis.csv"
+INPUT_DIR = BASE_DIR / "ara_202509"
+OUTPUT_FILE = "word_frequency_analysis_202509.csv"
 
 TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
 OBJECT_CACHE_FILE = BASE_DIR / "object_category_cache.json"
@@ -44,6 +44,7 @@ BATCH_SIZE = get_env_int("TRANSLATE_BATCH_SIZE", 100)
 TRANSLATE_WORKERS = get_env_int("TRANSLATE_WORKERS", 4)
 TRANSLATE_SLEEP_SECONDS = get_env_float("TRANSLATE_SLEEP_SECONDS", 0)
 DEEPSEEK_BATCH_SIZE = get_env_int("DEEPSEEK_BATCH_SIZE", 500)
+DEEPSEEK_WORKERS = get_env_int("DEEPSEEK_WORKERS", 0)
 TO_LOWER = True
 REMOVE_STOPWORDS = True
 
@@ -352,20 +353,34 @@ def classify_plushable(words):
 
     print("DeepSeek plush pending:", len(need_ai))
 
-    for index in range(0, len(need_ai), DEEPSEEK_BATCH_SIZE):
-        batch = need_ai[index : index + DEEPSEEK_BATCH_SIZE]
-        batch_result = classify_plushable_batch(batch)
+    batches = [need_ai[i : i + DEEPSEEK_BATCH_SIZE] for i in range(0, len(need_ai), DEEPSEEK_BATCH_SIZE)]
+    if not batches:
+        return result
 
-        for word in batch:
-            cache_key = normalize_cache_key(word)
-            decision = normalize_plushable(batch_result.get(word, "否"))
-            result[word] = decision
-            cache[cache_key] = decision
+    workers = len(batches) if DEEPSEEK_WORKERS <= 0 else min(DEEPSEEK_WORKERS, len(batches))
+    done_count = 0
 
-        save_cache(cache, PLUSHABLE_CACHE_FILE)
-        print("DeepSeek plush progress:", index + len(batch), "/", len(need_ai))
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        future_to_batch = {executor.submit(classify_plushable_batch, batch): batch for batch in batches}
 
-        time.sleep(0.5)
+        for future in as_completed(future_to_batch):
+            batch = future_to_batch[future]
+            try:
+                batch_result = future.result()
+            except Exception as exc:
+                print("DeepSeek plush error:", exc)
+                batch_result = {}
+
+            for word in batch:
+                cache_key = normalize_cache_key(word)
+                decision = normalize_plushable((batch_result or {}).get(word, "否"))
+                result[word] = decision
+                cache[cache_key] = decision
+
+            done_count += len(batch)
+            print("DeepSeek plush progress:", done_count, "/", len(need_ai))
+
+    save_cache(cache, PLUSHABLE_CACHE_FILE)
 
     return result
 

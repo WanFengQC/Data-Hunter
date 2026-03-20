@@ -1,6 +1,6 @@
 import json
 import os
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from openai import OpenAI
 
@@ -19,6 +19,7 @@ def get_env_int(name, default):
 DEEPSEEK_API_KEY = "sk-f93c5cc7df984f2ea501017091e1e633"
 BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_BATCH_SIZE = get_env_int("DEEPSEEK_BATCH_SIZE", 500)
+DEEPSEEK_WORKERS = get_env_int("DEEPSEEK_WORKERS", 0)
 
 BASE_DIR = Path(__file__).resolve().parent
 CACHE_FILE = BASE_DIR / "object_category_cache.json"
@@ -160,26 +161,35 @@ def classify_with_cache(words):
     print("DeepSeek待处理:", len(need))
 
     batch_size = DEEPSEEK_BATCH_SIZE
+    batches = [need[i : i + batch_size] for i in range(0, len(need), batch_size)]
+    if not batches:
+        return result
 
-    for i in range(0, len(need), batch_size):
+    workers = len(batches) if DEEPSEEK_WORKERS <= 0 else min(DEEPSEEK_WORKERS, len(batches))
+    done_count = 0
 
-        batch = need[i:i+batch_size]
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        future_to_batch = {executor.submit(classify_batch, batch): batch for batch in batches}
 
-        res = classify_batch(batch)
-        normalized_res = {normalize_cache_key(k): v for k, v in res.items()}
+        for future in as_completed(future_to_batch):
+            batch = future_to_batch[future]
+            try:
+                res = future.result()
+            except Exception as e:
+                print("DeepSeek错误:", e)
+                res = {}
 
-        for w in batch:
-            cache_key = normalize_cache_key(w)
+            normalized_res = {normalize_cache_key(k): v for k, v in (res or {}).items()}
 
-            c = normalized_res.get(cache_key, "物体")
+            for w in batch:
+                cache_key = normalize_cache_key(w)
+                c = normalized_res.get(cache_key, "物体")
+                result[w] = c
+                cache[cache_key] = c
 
-            result[w] = c
-            cache[cache_key] = c
+            done_count += len(batch)
+            print("DeepSeek进度:", done_count, "/", len(need))
 
-        save_cache(cache)
-
-        print("DeepSeek进度:", i+len(batch), "/", len(need))
-
-        time.sleep(0.5)
+    save_cache(cache)
 
     return result

@@ -4,7 +4,7 @@ import time
 import requests
 import sys
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 cookies = {
     'current_guest': 'EYiHg0NJK4gX_251106-095964',
@@ -25,15 +25,15 @@ cookies = {
     'HMACCOUNT': 'DB02FE95993721CC',
     '_gcl_au': '1.1.1318762765.1773740930.651287507.1773822643.1773822643',
     '_clck': '1flo5tj%5E2%5Eg4h%5E0%5E2190',
-    '_gaf_fp': 'afb29b5d02f3e1efa2d19f7de3839a5e',
-    'rank-login-user': '5849493771f0Dc4PNRqqKvGsaAPIh5JCJN+HdNk539K4hHyCjRNHXLwC6kYf1oex70zrhNTtIe',
-    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjU4NDk0OTM3NzFmMERjNFBOUnFxS3ZHc2FBUEloNUpDSk4rSGROazUzOUs0aEh5Q2pSTkhYTHdDNmtZZjFvZXg3MHpyaE5UdEllIn0="',
-    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJ1ZUpNTllYb3pOWmN5OERtMWpTdEhBIiwiaWF0IjoxNzczODkxODg1LCJleHAiOjE3NzM5NzgyODUsIm5iZiI6MTc3Mzg5MTgyNSwic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IlMiLCJlbmQiOjE3NzQyMzc0ODU1MTR9.a8s4fmw5NnwekT7A9BOlT8mZoRavzPCpe-nNSXRh3ovTwDi844Ze6Ypm2mwOULIm-CLNr8BkURaHZJL0mSgTCRZ2zr5T15sAYdhEC_cZlEBIYkBXu2jMYk0gOhVqr6a0JXiCBU97XheiwnDUR9Gzlgdgar9QvSiP3SM98DqNk4AesxgfIck-gwEGpALrZn4WQ7GO-uLgyl6Ox2POx0aE9C0hGdMB8HkXVNxUqAEK0yBMx_wG491QykqSa4VOsScPiBjjVcPye-S1BOp7IENwQ14FwcA9u55NGmWmQCFRXmaqK5ltZ8DUDqjf_syDlnj18mZS-zAGhNhZgpH9I34Lig',
-    'JSESSIONID': '0B804F77BF2E58D5A2DC167DD668B10B',
-    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773893655',
-    '_ga_CN0F80S6GL': 'GS2.1.s1773890563$o19$g1$t1773893665$j50$l0$h0',
-    '_clsk': 'mquxhf%5E1773893669693%5E19%5E0%5Ez.clarity.ms%2Fcollect',
-    '_ga_38NCVF2XST': 'GS2.1.s1773890563$o21$g1$t1773893723$j60$l0$h1131638019',
+    '_gaf_fp': '455a17718beb8a36bf29435f86ff5725',
+    'rank-login-user': '7061793771oz23MDxrTgP6kWHXUJLLK/DSf55LOREy8fxqwhq7G6tCEhsCKQFesqXtl19b1c6j',
+    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjcwNjE3OTM3NzFvejIzTUR4clRnUDZrV0hYVUpMTEsvRFNmNTVMT1JFeThmeHF3aHE3RzZ0Q0Voc0NLUUZlc3FYdGwxOWIxYzZqIn0="',
+    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiI3TnJQNlhsOGxRMjY2R3YybjAzb01BIiwiaWF0IjoxNzczOTE0MDA3LCJleHAiOjE3NzQwMDA0MDcsIm5iZiI6MTc3MzkxMzk0Nywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IlMiLCJlbmQiOjE3NzQyNTk2MDcxMjh9.UF1tnqbTSjP1I7cDgJGQk_Pz7_W18_Svu8fXMobPZY3Oef-4V0gZwseSE97nhskaD_Jsi58M6rrXIKzYp-u5xWfs7TcEf3DFNeSulZybGrsMHhbegJAq5PVt6U9YS3XaHIzrbMBs3-hKwPrzYGOZxmLluYZtOYNP63hSDJSF7CYXDzNFG4UzX8Seb12K0sEwDvRD1IkWPGQIx26IYh90AfkbAKgS9MF1dqTJjVUfM3SiSiRjSgoWSWbATR6TTe7X7e1oAiqqLHlWaIEQ9hpkc1O0qlwt3JKRCTMKXNzFhpNUYEg3aL4pLK5_7JktLxoQdMEwIoKBilhpQCDmNLnZRg',
+    'JSESSIONID': 'B0EE4FCAAF988416EF4C9C935C46F120',
+    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773914012',
+    '_ga_CN0F80S6GL': 'GS2.1.s1773912139$o21$g1$t1773914031$j60$l0$h0',
+    '_clsk': '1pgmwu6%5E1773914453175%5E14%5E0%5Ez.clarity.ms%2Fcollect',
+    '_ga_38NCVF2XST': 'GS2.1.s1773912139$o24$g1$t1773914453$j60$l0$h772020937',
 }
 
 headers = {
@@ -62,7 +62,7 @@ json_data = {
     'movementMarket': '',
     'market': 'COM',
     'q': '',
-    'table': 'ara_202510',
+    'table': 'ara_202508',
     'reverseType': 'M',
     'departments': [
         'toys-and-games',
@@ -75,23 +75,51 @@ json_data = {
 }
 
 url = 'https://www.sellersprite.com/v3/api/aba-research'
-save_dir = 'ara_202510'
+save_dir = 'ara_202508'
 
 os.makedirs(save_dir, exist_ok=True)
 
 
-def pause_program():
+PAUSE_RETRY_MIN_SECONDS = 30 * 60
+PAUSE_RETRY_MAX_SECONDS = 60 * 60
+MAX_PAUSE_TIMES = 3
+pause_times = 0
+
+
+class PauseAndRetry(Exception):
+    pass
+
+
+def wait_for_manual_exit():
     try:
-        input('程序已暂停，按回车退出...')
+        input('程序已完成，按回车退出...')
     except Exception:
         pass
 
 
+def handle_pause_retry(reason=''):
+    global pause_times
+    pause_times += 1
+
+    if pause_times > MAX_PAUSE_TIMES:
+        print(f'暂停次数已超过 {MAX_PAUSE_TIMES} 次，程序自动退出。')
+        sys.exit(1)
+
+    wait_seconds = random.randint(PAUSE_RETRY_MIN_SECONDS, PAUSE_RETRY_MAX_SECONDS)
+    wait_minutes = wait_seconds // 60
+    retry_at = datetime.now() + timedelta(seconds=wait_seconds)
+
+    if reason:
+        print(reason)
+
+    print(f'程序暂停，第 {pause_times}/{MAX_PAUSE_TIMES} 次。')
+    print(f'将在 {wait_minutes} 分钟后自动重试，预计重试时间: {retry_at:%Y-%m-%d %H:%M:%S}')
+    time.sleep(wait_seconds)
+    print('开始自动重试...')
+
+
 def stop_program(msg=''):
-    if msg:
-        print(msg)
-    pause_program()
-    sys.exit(1)
+    raise PauseAndRetry(msg or '程序暂停')
 
 
 def parse_json_safe(text: str):
@@ -173,7 +201,7 @@ def get_total_pages(text: str) -> int:
         stop_program(f'无法从第1页解析 total_pages：{e}')
 
 
-def main():
+def run_once():
     page1_file = os.path.join(save_dir, 'keywords_page_1.html')
 
     if is_valid_file(page1_file):
@@ -214,7 +242,16 @@ def main():
     seconds = total_seconds % 60
 
     print(f'全部完成，共耗时{hours}时{minutes}分{seconds}秒')
-    pause_program()
+
+
+def main():
+    while True:
+        try:
+            run_once()
+            wait_for_manual_exit()
+            break
+        except PauseAndRetry as exc:
+            handle_pause_retry(str(exc))
 
 
 if __name__ == '__main__':
