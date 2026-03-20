@@ -21,3 +21,4 @@ dist/
 *.log
 
 backend/scripts/seller_sprite/ara*
+*.csv
