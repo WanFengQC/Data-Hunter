@@ -20,9 +20,11 @@ DEEPSEEK_API_KEY = "sk-f93c5cc7df984f2ea501017091e1e633"
 BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_BATCH_SIZE = get_env_int("DEEPSEEK_BATCH_SIZE", 500)
 DEEPSEEK_WORKERS = get_env_int("DEEPSEEK_WORKERS", 0)
+DEEPSEEK_DEBUG_PROMPT = str(os.getenv("DEEPSEEK_DEBUG_PROMPT", "0")).strip().lower()
 
 BASE_DIR = Path(__file__).resolve().parent
 CACHE_FILE = BASE_DIR / "object_category_cache.json"
+DEEPSEEK_DEBUG_LOG_FILE = BASE_DIR / "deepseek_prompt_debug.log"
 
 client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
@@ -58,6 +60,60 @@ def save_cache(cache):
 
 def normalize_cache_key(word):
     return str(word).strip().lower()
+
+
+def is_true_flag(value):
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def debug_deepseek_prompt(scope, model, system_prompt, user_prompt, words):
+    if not is_true_flag(DEEPSEEK_DEBUG_PROMPT):
+        return
+
+    payload = {
+        "scope": scope,
+        "model": model,
+        "words_count": len(words or []),
+        "words": list(words or []),
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+    }
+    message = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    print("\n===== DeepSeek Debug Prompt Begin =====")
+    print(message)
+    print("===== DeepSeek Debug Prompt End =====\n")
+
+    try:
+        with DEEPSEEK_DEBUG_LOG_FILE.open("a", encoding="utf-8") as fp:
+            fp.write(message)
+            fp.write("\n\n")
+    except Exception:
+        pass
+
+
+def debug_deepseek_response(scope, raw_content, parsed_payload=None, normalized_payload=None):
+    if not is_true_flag(DEEPSEEK_DEBUG_PROMPT):
+        return
+
+    payload = {
+        "scope": scope,
+        "raw_content": raw_content,
+        "parsed_payload": parsed_payload,
+        "normalized_payload": normalized_payload,
+    }
+    message = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    print("\n===== DeepSeek Debug Response Begin =====")
+    print(message)
+    print("===== DeepSeek Debug Response End =====\n")
+
+    try:
+        with DEEPSEEK_DEBUG_LOG_FILE.open("a", encoding="utf-8") as fp:
+            fp.write(message)
+            fp.write("\n\n")
+    except Exception:
+        pass
 
 
 # =========================
@@ -103,12 +159,15 @@ def classify_batch(words):
 {words}
 """
 
+    system_prompt = "你是分类助手"
+    debug_deepseek_prompt("object_category", "deepseek-chat", system_prompt, prompt, words)
+
     try:
 
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是分类助手"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=0
@@ -120,6 +179,12 @@ def classify_batch(words):
         try:
             data = json.loads(content)
             if isinstance(data, dict):
+                debug_deepseek_response(
+                    "object_category",
+                    raw_content=content,
+                    parsed_payload=data,
+                    normalized_payload=data,
+                )
                 return data
         except:
             pass
@@ -132,6 +197,12 @@ def classify_batch(words):
                 k, v = line.split(":", 1)
                 result[k.strip().strip('"')] = v.strip().strip('"').replace(",", "")
 
+        debug_deepseek_response(
+            "object_category",
+            raw_content=content,
+            parsed_payload=None,
+            normalized_payload=result,
+        )
         return result
 
     except Exception as e:

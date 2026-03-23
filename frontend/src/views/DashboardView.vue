@@ -193,10 +193,15 @@
               <td
                 v-for="col in displayColumns"
                 :key="`${idx}-${col}`"
-                :title="col === 'top3asindtolist' || col === 'top3brands' ? '' : cellToText(getCell(row, col))"
+                :title="
+                  col === 'top3asindtolist' || col === 'top3brands' || col === 'trends'
+                    ? ''
+                    : cellToText(getCell(row, col))
+                "
                 :class="{
                   'drag-source-col': dragGhost.active && draggingCol === col,
                   'top3-cell': col === 'top3asindtolist' || col === 'top3brands',
+                  'trend-cell': col === 'trends',
                 }"
               >
                 <template v-if="col === 'top3asindtolist'">
@@ -241,6 +246,9 @@
                     </template>
                     <span v-else>-</span>
                   </div>
+                </template>
+                <template v-else-if="col === 'trends'">
+                  <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
                 </template>
                 <template v-else>
                   {{ formatCell(getCell(row, col)) }}
@@ -348,6 +356,13 @@
         <span v-else-if="tableRows.length" class="lazy-hint">已加载全部</span>
       </div>
     </section>
+
+    <TrendDataModal
+      :open="trendModalOpen"
+      :title="trendModalTitle"
+      :points="trendModalPoints"
+      @close="trendModalOpen = false"
+    />
   </main>
 </template>
 
@@ -363,8 +378,10 @@ import {
   fetchPgItems,
   fetchPgYearMonths,
 } from "@/api/data";
+import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
+import TrendDataModal from "@/components/TrendDataModal.vue";
 import WordFrequencyTrendChart from "@/components/WordFrequencyTrendChart.vue";
-import type { PgFilterOption, WordFrequencyTrendResponse } from "@/types/data";
+import type { PgFilterOption, PgTrendPoint, WordFrequencyTrendResponse } from "@/types/data";
 
 const COLUMN_PREFS_KEY = "data_hunter.pg.column_prefs.v1";
 const LONG_PRESS_MS = 220;
@@ -471,6 +488,9 @@ const compareWordInput = ref("");
 const compareTrendLoading = ref(false);
 const compareTrendError = ref("");
 const compareTrendResults = ref<WordFrequencyTrendResponse[]>([]);
+const trendModalOpen = ref(false);
+const trendModalTitle = ref("");
+const trendModalPoints = ref<PgTrendPoint[]>([]);
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -878,6 +898,14 @@ function formatCell(value: unknown): string {
 
 function getRowSerial(idx: number): number {
   return idx + 1;
+}
+
+function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoint[]): void {
+  if (!points.length) return;
+  const keyword = String(row.keyword ?? "").trim();
+  trendModalTitle.value = keyword ? `${keyword} 趋势数据` : "趋势数据";
+  trendModalPoints.value = points;
+  trendModalOpen.value = true;
 }
 
 function normalizedValueFilters(): Record<string, string[]> {
@@ -1631,6 +1659,13 @@ onBeforeUnmount(() => {
 .top3-cell {
   white-space: normal !important;
   min-width: 280px;
+  vertical-align: middle;
+}
+
+.trend-cell {
+  min-width: 204px;
+  max-width: 204px;
+  width: 204px;
   vertical-align: middle;
 }
 

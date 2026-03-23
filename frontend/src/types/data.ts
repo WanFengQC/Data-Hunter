@@ -44,6 +44,14 @@ export interface WordFrequencyTrendPoint {
   searches_growth_rate?: number | null;
 }
 
+export interface PgTrendPoint {
+  label: string;
+  searches: number | null;
+  rank: number | null;
+  rank_growth_rate: number | null;
+  searches_growth_rate: number | null;
+}
+
 export interface WordFrequencyTrendInfo {
   translation_zh?: string | null;
   object_category?: string | null;
