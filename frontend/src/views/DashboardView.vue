@@ -812,17 +812,33 @@ function parseTop3Asins(value: unknown): Top3AsinItem[] {
 }
 
 function parseTop3Brands(value: unknown): string[] {
+  const normalizeBrand = (raw: string): string => {
+    const text = raw.trim();
+    if (!text) return "-";
+    const lowered = text.toLowerCase();
+    if (lowered === "none" || lowered === "null" || lowered === "nan") return "-";
+    return text;
+  };
+
+  const normalizeTop3 = (items: string[]): string[] => {
+    if (!items.length) return [];
+    const fixed = items.map((item) => normalizeBrand(item)).slice(0, 3);
+    while (fixed.length < 3) fixed.push("-");
+    return fixed;
+  };
+
   if (Array.isArray(value)) {
-    return value
+    return normalizeTop3(
+      value
       .map((item) => {
-        if (typeof item === "string") return item.trim();
+        if (typeof item === "string") return item;
         if (item && typeof item === "object") {
           return pickString(item as Record<string, unknown>, ["brand", "name", "label"]);
         }
         return "";
       })
-      .filter(Boolean)
-      .slice(0, 3);
+      .slice(0, 3)
+    );
   }
   if (typeof value === "string") {
     const text = value.trim();
@@ -831,11 +847,9 @@ function parseTop3Brands(value: unknown): string[] {
       const parsed = JSON.parse(text);
       return parseTop3Brands(parsed);
     } catch {
-      return text
+      return normalizeTop3(text
         .split(/[,\n|]+/)
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 3);
+        .slice(0, 3));
     }
   }
   return [];
