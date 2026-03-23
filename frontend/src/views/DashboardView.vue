@@ -82,7 +82,24 @@
 
     <section class="table-panel" :class="{ 'panel-fullscreen': panelFullscreen }" ref="tablePanelRef">
       <div class="table-panel-header">
-        <h2>PostgreSQL 数据表</h2>
+        <div class="table-type-switch">
+          <button
+            type="button"
+            class="secondary-btn"
+            :class="{ active: currentTableMode === 'aba' }"
+            @click="switchTable('aba')"
+          >
+            ABA表
+          </button>
+          <button
+            type="button"
+            class="secondary-btn"
+            :class="{ active: currentTableMode === 'word' }"
+            @click="switchTable('word')"
+          >
+            词频表
+          </button>
+        </div>
         <div class="table-filters">
           <label>
             年度
@@ -372,19 +389,30 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   createPgExportJob,
   downloadPgExportJob,
-  fetchWordFrequencyTrend,
   fetchPgExportJob,
   fetchPgFilterOptions,
   fetchPgItems,
-  fetchPgYearMonths,
+  fetchPgYearMonthsByTable,
+  fetchWordFrequencyTrend,
 } from "@/api/data";
 import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
 import TrendDataModal from "@/components/TrendDataModal.vue";
 import WordFrequencyTrendChart from "@/components/WordFrequencyTrendChart.vue";
 import type { PgFilterOption, PgTrendPoint, WordFrequencyTrendResponse } from "@/types/data";
 
-const COLUMN_PREFS_KEY = "data_hunter.pg.column_prefs.v1";
+const COLUMN_PREFS_KEY_PREFIX = "data_hunter.pg.column_prefs.v2";
 const LONG_PRESS_MS = 220;
+type DataTableMode = "aba" | "word";
+const DATA_TABLES: Record<DataTableMode, { title: string; tableName: string; keywordCol: string; defaultSortField: string }> =
+  {
+    aba: { title: "ABA表", tableName: "seller_sprite_items", keywordCol: "keyword", defaultSortField: "searches" },
+    word: {
+      title: "词频表",
+      tableName: "seller_sprite_word_frequency",
+      keywordCol: "word",
+      defaultSortField: "total_searches",
+    },
+  };
 type TextFilterOp =
   | "contains"
   | "contains_word"
@@ -409,7 +437,7 @@ const textFilterOpOptions: Array<{ value: TextFilterOp; label: string }> = [
   { value: "is_not_blank", label: "非空白" },
 ];
 
-const EXCLUDED_COLUMNS = new Set([
+const BASE_EXCLUDED_COLUMNS = new Set([
   "id",
   "source_folder",
   "source_file",
@@ -419,6 +447,7 @@ const EXCLUDED_COLUMNS = new Set([
   "station",
   "keywordjp",
 ]);
+const WORD_TABLE_FORCE_HIDDEN_COLUMNS = new Set(["year", "month", "updated_at"]);
 
 const FIELD_LABELS: Record<string, string> = {
   id: "编号",
@@ -466,12 +495,27 @@ const FIELD_LABELS: Record<string, string> = {
   exactppc: "精确PPC",
   top3asindtolist: "点击前三ASIN",
   trends: "趋势数据",
+  word: "单词",
+  word_zh: "中文释义",
+  pos: "词性",
+  category: "类别",
+  plushable: "可毛绒",
+  freq: "词频",
+  freq_ratio: "词频占比",
+  freq_ratio_percent: "词频占比(%)",
+  coverage: "覆盖数",
+  coverage_percent: "覆盖率(%)",
+  total_searches: "总搜索量",
+  year: "年份",
+  month: "月份",
+  updated_at: "更新时间",
 };
 
 const exportLoading = ref(false);
 
 const tableLoading = ref(false);
 const tableLoadingMore = ref(false);
+const currentTableMode = ref<DataTableMode>("aba");
 const tableColumns = ref<string[]>([]);
 const tableRows = ref<Record<string, unknown>[]>([]);
 const tableTotal = ref(0);
@@ -552,7 +596,19 @@ const monthOptions = computed(() => {
   return Array.from(months).sort((a, b) => a - b);
 });
 
-const availableColumns = computed(() => tableColumns.value.filter((c) => !EXCLUDED_COLUMNS.has(c)));
+const currentTableMeta = computed(() => DATA_TABLES[currentTableMode.value]);
+const currentTableName = computed(() => currentTableMeta.value.tableName);
+const currentTableTitle = computed(() => currentTableMeta.value.title);
+
+const excludedColumns = computed(() => {
+  const base = new Set(BASE_EXCLUDED_COLUMNS);
+  if (currentTableMode.value === "word") {
+    for (const col of WORD_TABLE_FORCE_HIDDEN_COLUMNS) base.add(col);
+  }
+  return base;
+});
+
+const availableColumns = computed(() => tableColumns.value.filter((c) => !excludedColumns.value.has(c)));
 
 const sortFieldOptions = computed(() => {
   const cols = [...availableColumns.value];
@@ -597,9 +653,13 @@ function columnLabel(col: string): string {
   return FIELD_LABELS[col] || col;
 }
 
+function getColumnPrefsKey(): string {
+  return `${COLUMN_PREFS_KEY_PREFIX}.${currentTableMode.value}`;
+}
+
 function loadColumnPrefs(): void {
   try {
-    const raw = localStorage.getItem(COLUMN_PREFS_KEY);
+    const raw = localStorage.getItem(getColumnPrefsKey());
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return;
@@ -610,7 +670,7 @@ function loadColumnPrefs(): void {
 }
 
 function saveColumnPrefs(): void {
-  localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(visibleColumns.value));
+  localStorage.setItem(getColumnPrefsKey(), JSON.stringify(visibleColumns.value));
 }
 
 function syncColumnsState(): void {
@@ -747,8 +807,12 @@ function onGlobalPointerUp(): void {
 }
 
 async function initYearMonthFilters(): Promise<void> {
-  yearMonths.value = await fetchPgYearMonths();
-  if (!yearMonths.value.length) return;
+  yearMonths.value = await fetchPgYearMonthsByTable(currentTableName.value);
+  if (!yearMonths.value.length) {
+    selectedYear.value = 0;
+    selectedMonth.value = 0;
+    return;
+  }
   const latest = yearMonths.value[0];
   selectedYear.value = Math.floor(latest / 100);
   selectedMonth.value = latest % 100;
@@ -902,7 +966,7 @@ function getRowSerial(idx: number): number {
 
 function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoint[]): void {
   if (!points.length) return;
-  const keyword = String(row.keyword ?? "").trim();
+  const keyword = String(row.keyword ?? row.word ?? "").trim();
   trendModalTitle.value = keyword ? `${keyword} 趋势数据` : "趋势数据";
   trendModalPoints.value = points;
   trendModalOpen.value = true;
@@ -958,6 +1022,7 @@ async function loadTable(options: { append?: boolean } = {}): Promise<void> {
       sortDir: sortDir.value,
       textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
+      table: currentTableName.value,
     });
     if (requestSeq !== activeTableRequestSeq) return;
 
@@ -993,6 +1058,29 @@ function triggerRealtimeReload(): void {
   if (!autoReloadReady.value) return;
   if (suspendAutoReload.value) return;
   void reloadTable();
+}
+
+async function switchTable(mode: DataTableMode): Promise<void> {
+  if (currentTableMode.value === mode) return;
+  suspendAutoReload.value = true;
+  currentTableMode.value = mode;
+  closeFilterMenu();
+  textFilters.value = {};
+  valueFilters.value = {};
+  tableColumns.value = [];
+  tableRows.value = [];
+  tableTotal.value = 0;
+  tablePage.value = 1;
+  visibleColumns.value = [];
+  sortBy.value = "id";
+  sortDir.value = "asc";
+  try {
+    loadColumnPrefs();
+    await initYearMonthFilters();
+    await loadTable();
+  } finally {
+    suspendAutoReload.value = false;
+  }
 }
 
 function isColumnVisible(col: string): boolean {
@@ -1099,6 +1187,7 @@ async function loadFilterOptionsForMenu(keyword: string, initialize = false): Pr
       textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
       limit: keyword ? 20000 : 500,
+      table: currentTableName.value,
     });
 
     if (!filterMenu.value.open || filterMenu.value.column !== col) return;
@@ -1234,10 +1323,11 @@ async function exportFullCsv(): Promise<void> {
       sortDir: sortDir.value,
       textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
+      table: currentTableName.value,
     });
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    let fileName = `pg_items_full_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
+    let fileName = `pg_${currentTableMode.value}_full_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
     let completed = false;
 
     for (let i = 0; i < 1800; i += 1) {
@@ -1317,6 +1407,9 @@ async function searchWordTrend(): Promise<void> {
   try {
     const data = await fetchWordFrequencyTrend(word);
     wordTrendResult.value = data;
+    if (currentTableMode.value !== "aba") {
+      await switchTable("aba");
+    }
 
     const latestYm = Number(data.latest_year_month) || Number(yearMonths.value[0] || 0);
     suspendAutoReload.value = true;
@@ -1325,13 +1418,13 @@ async function searchWordTrend(): Promise<void> {
       selectedMonth.value = latestYm % 100;
     }
     textFilters.value = {
-      keyword: {
+      [DATA_TABLES.aba.keywordCol]: {
         op: "contains_word",
         value: word,
       },
     };
     valueFilters.value = {};
-    sortBy.value = "searches";
+    sortBy.value = DATA_TABLES.aba.defaultSortField;
     sortDir.value = "desc";
     closeFilterMenu();
     suspendAutoReload.value = false;

@@ -5,6 +5,7 @@ import requests
 import sys
 import random
 import threading
+from pathlib import Path
 from datetime import datetime, timedelta
 
 cookies = {
@@ -64,7 +65,7 @@ json_data = {
     'movementMarket': '',
     'market': 'COM',
     'q': '',
-    'table': 'ara_202506',
+    'table': 'ara_202503',
     'reverseType': 'M',
     'departments': [
         'toys-and-games',
@@ -77,13 +78,14 @@ json_data = {
 }
 
 url = 'https://www.sellersprite.com/v3/api/aba-research'
-save_dir = 'ara_202506'
+ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", "D:/ara"))
+save_dir = str(ARA_BASE_DIR / json_data['table'])
 
 os.makedirs(save_dir, exist_ok=True)
 
 
-PAUSE_RETRY_MIN_SECONDS = 30 * 60
-PAUSE_RETRY_MAX_SECONDS = 60 * 60
+PAUSE_RETRY_MIN_SECONDS = 20 * 60
+PAUSE_RETRY_MAX_SECONDS = 40 * 60
 MAX_PAUSE_TIMES = 3
 pause_times = 0
 
@@ -104,30 +106,17 @@ def wait_retry_or_enter(wait_seconds: int) -> bool:
     返回 True 表示用户按回车手动跳过等待；
     返回 False 表示等待结束进入自动重试。
     """
-    print('等待期间按回车可立即重试（本次不计入自动暂停次数）。')
+    print('等待期间输入回车可立即重试（本次不计入自动暂停次数）。')
     deadline = time.time() + wait_seconds
 
-    # Windows 控制台：非阻塞检测回车
-    try:
-        import msvcrt  # type: ignore
-
-        while time.time() < deadline:
-            while msvcrt.kbhit():
-                ch = msvcrt.getwch()
-                if ch in ('\r', '\n'):
-                    return True
-            time.sleep(0.2)
-        return False
-    except Exception:
-        pass
-
-    # 兜底方案：后台线程阻塞等 input
+    # 统一使用 input，避免某些终端下 msvcrt 无法正确捕获回车
     skip_event = threading.Event()
 
     def _wait_input():
         try:
-            input()
-            skip_event.set()
+            typed = input('请输入回车立即重试（或等待自动重试）: ')
+            if typed == '':
+                skip_event.set()
         except Exception:
             pass
 

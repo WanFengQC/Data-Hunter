@@ -22,6 +22,15 @@ export async function fetchPgYearMonths(): Promise<number[]> {
   return data.items;
 }
 
+export async function fetchPgYearMonthsByTable(table?: string): Promise<number[]> {
+  const payload: Record<string, unknown> = {};
+  if (table) payload.table = table;
+  const { data } = await apiClient.get<YearMonthsResponse>("/pg/year-months", {
+    params: payload,
+  });
+  return data.items;
+}
+
 export async function fetchWordFrequencyTrend(word: string): Promise<WordFrequencyTrendResponse> {
   const { data } = await apiClient.get<WordFrequencyTrendResponse>("/pg/word-frequency-trend", {
     params: { word },
@@ -38,6 +47,7 @@ export async function fetchPgItems(params: {
   sortDir?: "asc" | "desc";
   textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
+  table?: string;
 }): Promise<PgItemsResponse> {
   const payload: Record<string, unknown> = {
     year: params.year,
@@ -46,6 +56,7 @@ export async function fetchPgItems(params: {
     page_size: params.pageSize ?? 20,
     sort_by: params.sortBy,
     sort_dir: params.sortDir,
+    table: params.table,
   };
 
   if (params.textFilters && Object.keys(params.textFilters).length > 0) {
@@ -68,12 +79,14 @@ export async function exportPgItemsCsv(params: {
   sortDir?: "asc" | "desc";
   textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
+  table?: string;
 }): Promise<Blob> {
   const payload: Record<string, unknown> = {
     year: params.year,
     month: params.month,
     sort_by: params.sortBy,
     sort_dir: params.sortDir,
+    table: params.table,
   };
 
   if (params.textFilters && Object.keys(params.textFilters).length > 0) {
@@ -108,12 +121,14 @@ export async function createPgExportJob(params: {
   sortDir?: "asc" | "desc";
   textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
+  table?: string;
 }): Promise<PgExportJob> {
   const payload: Record<string, unknown> = {
     year: params.year,
     month: params.month,
     sort_by: params.sortBy,
     sort_dir: params.sortDir,
+    table: params.table,
   };
 
   if (params.textFilters && Object.keys(params.textFilters).length > 0) {
@@ -150,6 +165,7 @@ export async function fetchPgFilterOptions(params: {
   limit?: number;
   textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
+  table?: string;
 }): Promise<PgFilterOption[]> {
   const payload: Record<string, unknown> = {
     column: params.column,
@@ -157,6 +173,7 @@ export async function fetchPgFilterOptions(params: {
     month: params.month,
     keyword: params.keyword,
     limit: params.limit ?? 300,
+    table: params.table,
   };
 
   if (params.textFilters && Object.keys(params.textFilters).length > 0) {

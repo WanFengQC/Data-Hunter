@@ -15,13 +15,14 @@ from psycopg.types.json import Jsonb
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent.parent
 REPO_DIR = BACKEND_DIR.parent
+ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
 
 # =========================
 # Manual Config (Edit Here)
 # =========================
 # If CLI args `--folder/--folders` are not provided, these folders will be used.
 # Example: ["ara_202512"] or ["ara_202512", "ara_202601"]
-IMPORT_FOLDERS: list[str] = ["ara_202508"]
+IMPORT_FOLDERS: list[str] = ["ara_202505","ara_202504"]
 
 
 def load_env_files() -> None:
@@ -43,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-dir",
-        default=str(SCRIPT_DIR),
-        help="Base directory containing month folders (default: script directory).",
+        default=str(ARA_BASE_DIR),
+        help="Base directory containing month folders (default: D:\\ara).",
     )
     parser.add_argument(
         "--folders",

@@ -1,3 +1,4 @@
+﻿import asyncio
 import json
 import os
 import re
@@ -13,7 +14,7 @@ from deep_translator import GoogleTranslator
 from nltk import pos_tag
 from nltk.corpus import wordnet as wn
 
-from deepseek_classify_batch import classify_with_cache, client as deepseek_client
+from deepseek_classify_batch import classify_with_cache, async_client as deepseek_async_client
 
 # =========================
 # 配置
@@ -33,14 +34,25 @@ def get_env_float(name, default):
         return default
 
 
+def resolve_worker_count(total_batches, requested_workers, auto_workers, max_workers):
+    if total_batches <= 0:
+        return 1
+
+    hard_cap = max(1, int(max_workers or 1))
+    if requested_workers and requested_workers > 0:
+        return max(1, min(int(requested_workers), total_batches, hard_cap))
+
+    auto = max(1, int(auto_workers or 1))
+    return max(1, min(auto, total_batches, hard_cap))
+
+
 BASE_DIR = Path(__file__).resolve().parent
-INPUT_DIR = BASE_DIR / "ara_202507" / "test"
-OUTPUT_FILE = "test.csv"
-# OUTPUT_FILE = "word_frequency_analysis_202508.csv"
+ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
+INPUT_DIR = ARA_BASE_DIR / "ara_202508"
+OUTPUT_FILE = "word_frequency_analysis_202508.csv"
 
 TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
 OBJECT_CACHE_FILE = BASE_DIR / "object_category_cache.json"
-PLUSHABLE_CACHE_FILE = BASE_DIR / "plushable_cache.json"
 TAG_REASON_CACHE_FILE = BASE_DIR / "tag_reason_cache.json"
 DEFAULT_TAG_KB_FILE = Path(r"C:\Users\EDY\Downloads\毛绒玩具品类打标知识库.txt")
 
@@ -49,7 +61,12 @@ TRANSLATE_WORKERS = get_env_int("TRANSLATE_WORKERS", 4)
 TRANSLATE_SLEEP_SECONDS = get_env_float("TRANSLATE_SLEEP_SECONDS", 0)
 DEEPSEEK_BATCH_SIZE = get_env_int("DEEPSEEK_BATCH_SIZE", 500)
 DEEPSEEK_WORKERS = get_env_int("DEEPSEEK_WORKERS", 0)
+DEEPSEEK_MAX_WORKERS = get_env_int("DEEPSEEK_MAX_WORKERS", 64)
+DEEPSEEK_AUTO_WORKERS = get_env_int("DEEPSEEK_AUTO_WORKERS", 24)
 DEEPSEEK_TAG_BATCH_SIZE = get_env_int("DEEPSEEK_TAG_BATCH_SIZE", 100)
+DEEPSEEK_TAG_MAX_WORKERS = get_env_int("DEEPSEEK_TAG_MAX_WORKERS", 128)
+DEEPSEEK_TAG_AUTO_WORKERS = get_env_int("DEEPSEEK_TAG_AUTO_WORKERS", 48)
+DEEPSEEK_TAG_CACHE_SAVE_EVERY = get_env_int("DEEPSEEK_TAG_CACHE_SAVE_EVERY", 5)
 DEEPSEEK_DEBUG_PROMPT = str(os.getenv("DEEPSEEK_DEBUG_PROMPT", "0")).strip().lower()
 DEEPSEEK_DEBUG_LOG_FILE = BASE_DIR / "deepseek_prompt_debug.log"
 USE_LOCAL_TAG_KB = str(os.getenv("USE_LOCAL_TAG_KB", "0")).strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -133,7 +150,7 @@ TAG_REASON_HINTS = {
     "1核心词": "类目核心词，直接定义产品大类。",
     "2外形": "主体形象词，决定视觉与物种识别。",
     "3属性": "功能或工艺属性词，体现差异化卖点。",
-    "4痛点": "需求/痛点词，直接承接购买动机。",
+    "4痛点": "需求痛点词，直接承接购买动机。",
     "5规格": "尺寸或重量规格词，用于量级筛选。",
     "6受众": "目标使用人群词，限定受众范围。",
     "7场景": "使用或送礼场景词，指向消费节点。",
@@ -210,7 +227,7 @@ def get_pos(word):
 
 
 # =========================
-# WordNet分类
+# WordNet 分类
 # =========================
 
 MAP = {
@@ -221,6 +238,33 @@ MAP = {
     "plant": "植物",
     "artifact": "物体",
     "shape": "形状",
+}
+
+CANONICAL_CATEGORIES = [
+    "交通工具",
+    "非名词",
+    "动物",
+    "人物",
+    "食物",
+    "植物",
+    "形状",
+    "物体",
+    "抽象",
+]
+
+CATEGORY_ALIASES = {
+    "animal": "动物",
+    "vehicle": "交通工具",
+    "person": "人物",
+    "food": "食物",
+    "plant": "植物",
+    "shape": "形状",
+    "artifact": "物体",
+    "object": "物体",
+    "abstract": "抽象",
+    "nonnoun": "非名词",
+    "non_noun": "非名词",
+    "noun": "物体",
 }
 
 
@@ -244,6 +288,29 @@ def wordnet_classify(word):
                     return "物体"
 
     return None
+
+
+def normalize_category_label(value, fallback="物体"):
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+
+    text = text.replace("\ufeff", "").replace("\\", "")
+    text = re.sub(r'["\'`“”‘’＂]', "", text)
+    text = text.strip().strip(",:;，。：；")
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        return fallback
+
+    low = text.lower()
+    if low in CATEGORY_ALIASES:
+        return CATEGORY_ALIASES[low]
+
+    for label in CANONICAL_CATEGORIES:
+        if label in text:
+            return label
+
+    return fallback
 
 
 # =========================
@@ -394,6 +461,12 @@ def parse_tag_kb():
                     "关联词组": current_related,
                 }
 
+    def split_after_colon(text):
+        for sep in ("：", ":"):
+            if sep in text:
+                return text.split(sep, 1)[1].strip()
+        return ""
+
     for raw_line in lines:
         line = raw_line.strip()
         if not line:
@@ -410,8 +483,10 @@ def parse_tag_kb():
             head_match = re.match(r"([1-8])", title_compact)
             if head_match:
                 current_label = TAG_LABEL_BY_INDEX.get(head_match.group(1), "")
-            elif "噪音" in title or "待定" in title:
+            elif ("噪音" in title) or ("待定" in title) or ("无效" in title):
                 current_label = "无效词"
+            else:
+                current_label = ""
             continue
 
         if line.startswith("### ["):
@@ -420,22 +495,28 @@ def parse_tag_kb():
             current_related = ""
             bracket_match = re.search(r"\[(.*?)\]", line)
             if bracket_match:
-                raw_terms = bracket_match.group(1).split("/")
+                raw_terms = re.split(r"[\\/、,，]", bracket_match.group(1))
                 current_terms = [normalize_cache_key(term) for term in raw_terms if normalize_cache_key(term)]
             else:
                 current_terms = []
             continue
 
-        if "原因备注" in line and "：" in line:
-            current_reason = line.split("：", 1)[1].strip()
+        if "原因备注" in line:
+            maybe = split_after_colon(line)
+            if maybe:
+                current_reason = maybe
             continue
 
-        if "关联词组" in line and "：" in line:
-            current_related = line.split("：", 1)[1].strip()
+        if "关联词组" in line:
+            maybe = split_after_colon(line)
+            if maybe:
+                current_related = maybe
             continue
 
-        if "处理动作" in line and "：" in line:
-            current_reason = line.split("：", 1)[1].strip()
+        if "处理动作" in line:
+            maybe = split_after_colon(line)
+            if maybe:
+                current_reason = maybe
             continue
 
     flush_entry()
@@ -449,7 +530,7 @@ def clean_reason_text(value):
         return ""
     text = text.strip("`").strip()
     text = re.sub(r"\s+", " ", text)
-    text = text.lstrip("，,。;；:：")
+    text = text.lstrip("，。；：")
     return text
 
 
@@ -521,12 +602,12 @@ def parse_tag_rows_loose(content):
     rows = {}
 
     candidates = [body]
-    # 某些模型会把整段JSON再转义一次，补一份反转义候选
+    # 有些模型会把整段 JSON 再转义一次，补一份反转义候选。
     if '\\"' in body:
         candidates.append(body.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t"))
 
     for text in candidates:
-        # 先尝试抽取每个对象块（即便整段被截断，也可拿到前半段完整对象）
+        # 先抽取每个对象块，即便整段被截断，也能拿到前半段完整对象。
         object_blocks = re.findall(r"\{[^{}]*\}", text, flags=re.S)
         for block in object_blocks:
             normalized_block = re.sub(r'"关\s*键\s*词"', '"关键词"', block)
@@ -546,10 +627,10 @@ def parse_tag_rows_loose(content):
                     label = str(data.get("对应标签") or data.get("标签") or data.get("label") or "").strip()
                     reason = str(data.get("原因备注") or data.get("原因") or data.get("reason") or "").strip()
             except Exception:
-                # JSON块失败则按字段回退抽取
-                k_match = re.search(r'"关\s*键\s*词"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
-                l_match = re.search(r'"对\s*应\s*标\s*签"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
-                r_match = re.search(r'"原\s*因\s*备\s*注"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
+                # JSON 失败则按字段回退抽取。
+                k_match = re.search(r'"关键词"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
+                l_match = re.search(r'"对应标签"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
+                r_match = re.search(r'"原因备注"\s*:\s*"(?P<v>(?:\\.|[^"\\])*)"', normalized_block, flags=re.S)
                 keyword = _decode_json_like_string(k_match.group("v")) if k_match else ""
                 label = _decode_json_like_string(l_match.group("v")) if l_match else ""
                 reason = _decode_json_like_string(r_match.group("v")) if r_match else ""
@@ -577,7 +658,12 @@ def normalize_tag_entry(word, entry, zh_map):
             or entry.get("tag")
             or ""
         )
-        reason_raw = entry.get("原因") or entry.get("reason") or entry.get("原因备注") or ""
+        reason_raw = (
+            entry.get("原因")
+            or entry.get("reason")
+            or entry.get("原因备注")
+            or ""
+        )
     elif isinstance(entry, str):
         label_raw = entry
 
@@ -599,7 +685,7 @@ def is_low_confidence_fallback_entry(entry):
     return label == "无效词" and LOW_CONFIDENCE_INVALID_REASON in reason and "知识库数据" not in reason
 
 
-def classify_tag_reason_batch(words):
+async def classify_tag_reason_batch_async(words):
     if not words:
         return {}
 
@@ -608,27 +694,17 @@ def classify_tag_reason_batch(words):
 # 亚马逊毛绒玩具词根自动打标专家 (Prompt V1.1)
 
 ## ⚖️ 角色定义
-
 - Role: 资深亚马逊数据分析师 & 毛绒玩具品类高级PM。
-
 - Core Value: 坚持“效率优先、数据驱动”，拒绝语义幻觉。通过建立精准的8维坐标系，将非结构化的词根转化为可量化的业务指标。
-
 - Tone: 极度理性、策略导向。输出优先级：准确率 > 格式对齐 > 专业备注。
 
----
-
 ## 📥 输入数据
-
 1. 数据格式：以换行符分隔的单个词根列表（Root Words）。
-
 2. 强制约束：
-   - 必须严格保持原始词根的输入顺序，严禁擅自打乱或去重。
-   - 严禁基于主观臆测补全词组中未出现的标签维度。
-
----
+- 必须严格保持原始词根的输入顺序，严禁擅自打乱或去重。
+- 严禁基于主观臆测补全词组中未出现的标签维度。
 
 ## 🚦 工作流：三阶段审计逻辑
-
 ### PHASE 1: 知识库优先检索 (KB Priority)
 在处理任何词根前，必须优先检索挂载的《毛绒玩具品类打标知识库.txt》。若命中库中定义的拦截逻辑，必须强制覆盖后续通用规则。
 
@@ -646,37 +722,20 @@ def classify_tag_reason_batch(words):
 ### PHASE 3: 专业归因与生成
 站在10年跨境PM视角，为每个标签简述为何选择该标签。
 
----
-
 ## 🗂️ 输出标准
-
-### 1. 强制表格格式
-必须以 Markdown 表格形式输出，包含以下三列：
-| 关键词 | 对应标签 | 原因备注 |
-| :--- | :--- | :--- |
-
-### 2. 输出要求
-- 确保关键词顺序与用户输入完全一致，方便用户回填 Excel。
-- 若遇到无法识别的词根，标签标注为“无效词”，备注写明原因。
-- 原因备注规范：必须严格遵循“中文意思+简述”的格式。先用双引号标出该词在当前语境下的核心中文翻译，逗号后跟上简短的业务定性定调。
-- 知识库命中规范：如果遇到命中知识库的词，格式必须为：“中文意思”，知识库数据：原因备注+关联词组。
-
-### 3. 输出示例
-| 关键词 | 对应标签 | 原因备注 |
-| :--- | :--- | :--- |
-| stuffed | 1核心词 | “填充”，类目大词。 |
-| weighted | 3工艺 | “加重”，核心差异化卖点。 |
-| red | 2外形 | “小熊猫”，知识库数据：在毛绒玩具搜索语境下，red 极大核心指向 Red Panda（小熊猫）。red panda plush、red panda stuffed animal。 |
-
----
+1. 关键词顺序必须与输入完全一致。
+2. 无法识别的词根标签标注为“无效词”，备注写明原因。
+3. 原因备注必须遵循“中文意思+简述”格式，例如：“填充”，类目大词。
+4. 若命中知识库，备注格式为：“中文意思”，知识库数据：原因备注+关联词组。
 
 ## ⚠️ 约束原则
-1. 顺序一致性：表格第一列必须与输入列表完全对齐，严禁错位。
-2. 唯一性：一个词根只能对应一个标签，选择该词在亚马逊搜索环境中最具商业价值的属性。
-3. 拒绝废话：备注需直击业务痛点，禁止使用“这个词描述了...”等啰嗦表述。
+1. 顺序一致性：严禁错位。
+2. 唯一性：一个词根只能对应一个标签。
+3. 拒绝废话：备注直击业务定性，不要啰嗦。
 
-## 🔧 返回格式（仅此处调整）
-为了程序稳定接收，请不要返回 Markdown 表格，改为仅返回 JSON（禁止代码块、禁止额外文本）：
+## 🔡 返回格式（程序接收专用）
+只返回 JSON，不要 Markdown，不要代码块，不要额外说明。
+格式如下：
 {{
   "rows": [
     {{"关键词": "stuffed", "对应标签": "1核心词", "原因备注": "“填充”，类目大词。"}},
@@ -684,21 +743,19 @@ def classify_tag_reason_batch(words):
   ]
 }}
 
-要求：
-- rows 数组顺序必须与输入词根顺序一致。
-- 每个词根必须有且只有一行。
-- 标签值必须是：1核心词/2外形/3属性/4痛点/5规格/6受众/7场景/8品牌/无效词。
+标签值必须是以下之一：
+1核心词 / 2外形 / 3属性 / 4痛点 / 5规格 / 6受众 / 7场景 / 8品牌 / 无效词
 
 ## Root Words（按行输入）
 {words_text}
 """
 
     system_prompt = "你是严格的词根打标助手，只输出JSON。"
-    debug_deepseek_prompt("tag_reason", "deepseek-chat", system_prompt, prompt, words)
+    debug_deepseek_prompt("tag_reason", "gpt-5.4", system_prompt, prompt, words)
 
     try:
-        response = deepseek_client.chat.completions.create(
-            model="deepseek-chat",
+        response = await deepseek_async_client.chat.completions.create(
+            model="gpt-5.4",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -813,39 +870,41 @@ def classify_tag_reason(words, zh_map):
     if need_ai:
         batch_size = max(1, DEEPSEEK_TAG_BATCH_SIZE)
         batches = [need_ai[i : i + batch_size] for i in range(0, len(need_ai), batch_size)]
-        workers = len(batches) if DEEPSEEK_WORKERS <= 0 else min(DEEPSEEK_WORKERS, len(batches))
-        done_count = 0
+        workers = resolve_worker_count(
+            total_batches=len(batches),
+            requested_workers=DEEPSEEK_WORKERS,
+            auto_workers=DEEPSEEK_TAG_AUTO_WORKERS,
+            max_workers=DEEPSEEK_TAG_MAX_WORKERS,
+        )
+        print("DeepSeek tag workers:", workers, "batch_size:", batch_size, "batches:", len(batches))
+        async def _run_tag_batches():
+            done_count = 0
+            done_batches = 0
+            sem = asyncio.Semaphore(max(1, workers))
+            missing_words_all = []
+            missing_seen = set()
 
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-            future_to_batch = {executor.submit(classify_tag_reason_batch, batch): batch for batch in batches}
+            async def _run_one(batch):
+                async with sem:
+                    try:
+                        batch_result = await classify_tag_reason_batch_async(batch) or {}
+                    except Exception as exc:
+                        print("DeepSeek tag error:", exc)
+                        batch_result = {}
+                    return batch, batch_result
 
-            for future in as_completed(future_to_batch):
-                batch = future_to_batch[future]
-                try:
-                    batch_result = future.result() or {}
-                except Exception as exc:
-                    print("DeepSeek tag error:", exc)
-                    batch_result = {}
+            tasks = [asyncio.create_task(_run_one(batch)) for batch in batches]
 
-                missing_words = [word for word in batch if not batch_result.get(word)]
-                if missing_words:
-                    print("DeepSeek tag retry missing:", len(missing_words))
-                    retry_size = 20
-                    retry_batches = [missing_words[i : i + retry_size] for i in range(0, len(missing_words), retry_size)]
-                    for retry_batch in retry_batches:
-                        retry_result = classify_tag_reason_batch(retry_batch) or {}
-                        for retry_word in retry_batch:
-                            if retry_result.get(retry_word):
-                                batch_result[retry_word] = retry_result[retry_word]
-                if missing_words and any(not batch_result.get(word) for word in missing_words):
-                    still_missing = [word for word in missing_words if not batch_result.get(word)]
-                    print("DeepSeek tag still missing after retry:", len(still_missing))
+            for task in asyncio.as_completed(tasks):
+                batch, batch_result = await task
 
                 for word in batch:
                     cache_key = normalize_cache_key(word)
                     raw_entry = batch_result.get(word, {})
                     if not raw_entry:
-                        result[word] = build_parse_failed_entry(word, zh_map)
+                        if word not in missing_seen:
+                            missing_seen.add(word)
+                            missing_words_all.append(word)
                         continue
 
                     normalized_entry = normalize_tag_entry(word, raw_entry, zh_map)
@@ -853,7 +912,31 @@ def classify_tag_reason(words, zh_map):
                     cache[cache_key] = normalized_entry
 
                 done_count += len(batch)
+                done_batches += 1
                 print("DeepSeek tag progress:", done_count, "/", len(need_ai))
+
+                if done_batches % max(1, DEEPSEEK_TAG_CACHE_SAVE_EVERY) == 0:
+                    save_cache(cache, TAG_REASON_CACHE_FILE)
+                    print("DeepSeek tag cache checkpoint:", done_batches, "/", len(batches))
+
+            if missing_words_all:
+                print("DeepSeek tag final retry missing:", len(missing_words_all))
+                final_retry_result = await classify_tag_reason_batch_async(missing_words_all) or {}
+                recovered_count = 0
+                for word in missing_words_all:
+                    cache_key = normalize_cache_key(word)
+                    raw_entry = final_retry_result.get(word, {})
+                    if not raw_entry:
+                        result[word] = build_parse_failed_entry(word, zh_map)
+                        continue
+
+                    normalized_entry = normalize_tag_entry(word, raw_entry, zh_map)
+                    result[word] = normalized_entry
+                    cache[cache_key] = normalized_entry
+                    recovered_count += 1
+                print("DeepSeek tag final retry recovered:", recovered_count, "/", len(missing_words_all))
+
+        asyncio.run(_run_tag_batches())
 
     save_cache(cache, TAG_REASON_CACHE_FILE)
     return result
@@ -866,6 +949,15 @@ def classify_tag_reason(words, zh_map):
 
 def classify_words(words, pos_map):
     cache = load_cache(OBJECT_CACHE_FILE)
+    cache_changed = 0
+
+    for key, value in list(cache.items()):
+        cleaned = normalize_category_label(value, fallback="物体")
+        if cleaned != value:
+            cache[key] = cleaned
+            cache_changed += 1
+    if cache_changed:
+        print("已清理object类别缓存脏值:", cache_changed)
 
     result = {}
     need_ai = []
@@ -879,13 +971,15 @@ def classify_words(words, pos_map):
             continue
 
         if cache_key in cache:
-            result[word] = cache[cache_key]
+            result[word] = normalize_category_label(cache[cache_key], fallback="物体")
+            cache[cache_key] = result[word]
             continue
 
         category = wordnet_classify(word)
         if category:
-            result[word] = category
-            cache[cache_key] = category
+            decision = normalize_category_label(category, fallback="物体")
+            result[word] = decision
+            cache[cache_key] = decision
             continue
 
         need_ai.append(word)
@@ -897,166 +991,11 @@ def classify_words(words, pos_map):
 
         for word in need_ai:
             cache_key = normalize_cache_key(word)
-            decision = ai_result.get(word, ai_result.get(cache_key, "物体"))
+            decision = normalize_category_label(ai_result.get(word, ai_result.get(cache_key, "物体")), fallback="物体")
             result[word] = decision
             cache[cache_key] = decision
 
     save_cache(cache, OBJECT_CACHE_FILE)
-    return result
-
-
-# =========================
-# DeepSeek毛绒化判断
-# =========================
-
-
-def normalize_plushable(value):
-    if isinstance(value, bool):
-        return "是" if value else "否"
-
-    if value is None:
-        return "否"
-
-    text = str(value).strip().lower()
-
-    yes_set = {"是", "yes", "y", "true", "1", "可", "可以", "能", "shape"}
-    no_set = {"否", "no", "n", "false", "0", "不", "不可以", "不能"}
-
-    if text in yes_set:
-        return "是"
-    if text in no_set:
-        return "否"
-    if any(token in text for token in ["yes", "true", "shape", "plush", "可", "能"]):
-        return "是"
-
-    return "否"
-
-
-def parse_deepseek_dict(content):
-    body = (content or "").strip()
-
-    if body.startswith("```"):
-        lines = body.splitlines()
-        if len(lines) >= 3:
-            body = "\n".join(lines[1:-1]).strip()
-
-    try:
-        data = json.loads(body)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
-
-    result = {}
-
-    for line in body.splitlines():
-        if ":" not in line:
-            continue
-
-        key, value = line.split(":", 1)
-        key = key.strip().strip('"').strip("'").strip(",")
-        value = value.strip().strip('"').strip("'").strip(",")
-
-        if key:
-            result[key] = value
-
-    return result
-
-
-def classify_plushable_batch(words):
-    if not words:
-        return {}
-
-    prompt = f"""
-你是毛绒玩具选品助手。
-
-请判断每个英文单词是否满足以下任意条件：
-1. 是“形状”词（例如 heart, star, circle）
-2. 是可以做成毛绒玩具的具体事物（动物、人物、食物、植物、交通工具、日常物体等）
-
-输出要求：
-1. 只返回 JSON，不要解释
-2. key 为英文单词，value 只能是“是”或“否”
-3. 每个单词都必须给出结果
-
-待判断单词：
-{words}
-"""
-
-    system_prompt = "你是严谨的二分类助手。"
-    debug_deepseek_prompt("plushable", "deepseek-chat", system_prompt, prompt, words)
-
-    try:
-        response = deepseek_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-        )
-
-        content = (response.choices[0].message.content or "").strip()
-        raw = parse_deepseek_dict(content)
-        normalized_raw = {str(k).lower(): v for k, v in raw.items()}
-        normalized_result = {word: normalize_plushable(normalized_raw.get(word.lower())) for word in words}
-        debug_deepseek_response(
-            "plushable",
-            raw_content=content,
-            parsed_payload=raw,
-            normalized_payload=normalized_result,
-        )
-        return normalized_result
-
-    except Exception as exc:
-        print("DeepSeek plush error:", exc)
-        return {word: "否" for word in words}
-
-
-def classify_plushable(words):
-    cache = load_cache(PLUSHABLE_CACHE_FILE)
-
-    result = {}
-    need_ai = []
-
-    for word in words:
-        cache_key = normalize_cache_key(word)
-        if cache_key in cache:
-            result[word] = normalize_plushable(cache[cache_key])
-        else:
-            need_ai.append(word)
-
-    print("DeepSeek plush pending:", len(need_ai))
-
-    batches = [need_ai[i : i + DEEPSEEK_BATCH_SIZE] for i in range(0, len(need_ai), DEEPSEEK_BATCH_SIZE)]
-    if not batches:
-        return result
-
-    workers = len(batches) if DEEPSEEK_WORKERS <= 0 else min(DEEPSEEK_WORKERS, len(batches))
-    done_count = 0
-
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        future_to_batch = {executor.submit(classify_plushable_batch, batch): batch for batch in batches}
-
-        for future in as_completed(future_to_batch):
-            batch = future_to_batch[future]
-            try:
-                batch_result = future.result()
-            except Exception as exc:
-                print("DeepSeek plush error:", exc)
-                batch_result = {}
-
-            for word in batch:
-                cache_key = normalize_cache_key(word)
-                decision = normalize_plushable((batch_result or {}).get(word, "否"))
-                result[word] = decision
-                cache[cache_key] = decision
-
-            done_count += len(batch)
-            print("DeepSeek plush progress:", done_count, "/", len(need_ai))
-
-    save_cache(cache, PLUSHABLE_CACHE_FILE)
-
     return result
 
 
@@ -1182,7 +1121,6 @@ def main():
     zh_map = translate(words)
     tag_reason = classify_tag_reason(words, zh_map)
     category = classify_words(words, pos_en)
-    plushable = classify_plushable(words)
 
     result_rows = []
 
@@ -1195,7 +1133,6 @@ def main():
                 "word_zh": zh_map.get(word, ""),
                 "pos": pos_zh[word],
                 "category": category[word],
-                "plushable": plushable.get(word, "否"),
                 "标签": tag_reason.get(word, {}).get("标签", "解析失败"),
                 "原因": tag_reason.get(word, {}).get("原因", build_parse_failed_entry(word, zh_map).get("原因")),
                 "freq": frequency,
@@ -1212,7 +1149,6 @@ def main():
         "word_zh",
         "pos",
         "category",
-        "plushable",
         "标签",
         "原因",
         "freq",

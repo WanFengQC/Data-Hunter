@@ -7,6 +7,8 @@ from lxml import etree
 import requests
 from backend.app.core.mongo_client import get_database
 
+ARA_BASE_DIR = os.getenv("ARA_BASE_DIR", r"D:\ara")
+
 class KeywordRowParser:
     """
     解析关键词数据行的解析器
@@ -555,7 +557,8 @@ def save_to_mongo(data):
         print(f"Error saving to MongoDB: {e}")
 
 if __name__ == "__main__":
-    with open('ara_202512/keywords_page_1.html', 'r', encoding='utf-8') as f:
+    sample_file = os.path.join(ARA_BASE_DIR, 'ara_202512', 'keywords_page_1.html')
+    with open(sample_file, 'r', encoding='utf-8') as f:
         html_content = f.read()
 
     print("Loaded HTML content from keywords_page.html")
