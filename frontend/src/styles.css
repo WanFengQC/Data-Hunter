@@ -14,9 +14,9 @@ body {
 }
 
 .dashboard {
-  max-width: 1200px;
+  width: min(1760px, 96vw);
   margin: 0 auto;
-  padding: 2rem 1rem 3rem;
+  padding: 2rem 0.5rem 3rem;
 }
 
 .dashboard-header h1 {

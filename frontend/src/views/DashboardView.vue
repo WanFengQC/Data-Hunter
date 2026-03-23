@@ -5,7 +5,82 @@
       <p>采集、处理和分析结果总览</p>
     </section>
 
-    <section class="table-panel">
+    <section class="word-trend-panel">
+      <div class="word-trend-header">
+        <h2>搜索量趋势搜索</h2>
+        <div class="word-trend-controls">
+          <input
+            v-model.trim="wordSearchInput"
+            class="word-trend-input"
+            type="text"
+            placeholder="输入单词，如 car"
+            @keydown.enter.prevent="searchWordTrend"
+          />
+          <button
+            class="primary-btn small trend-search-btn"
+            :disabled="wordTrendLoading || !wordSearchInput"
+            @click="searchWordTrend"
+          >
+            {{ wordTrendLoading ? "查询中..." : "查询" }}
+          </button>
+          <input
+            v-model.trim="compareWordInput"
+            class="word-trend-input compare-word-input"
+            type="text"
+            placeholder="对比词（支持多个，逗号/空格分隔）"
+            @keydown.enter.prevent="searchCompareTrend"
+          />
+          <button
+            class="secondary-btn trend-compare-btn"
+            :disabled="wordTrendLoading || compareTrendLoading || !wordTrendResult || !compareWordInput"
+            @click="searchCompareTrend"
+          >
+            {{ compareTrendLoading ? "添加中..." : "添加对比" }}
+          </button>
+          <button v-if="compareTrendResults.length" class="secondary-btn trend-clear-btn" @click="clearCompareTrend">
+            清空对比
+          </button>
+        </div>
+      </div>
+
+      <div v-if="wordTrendResult" class="word-trend-meta">
+        <span>单词: {{ wordTrendResult.word }}</span>
+        <span>中文: {{ wordTrendResult.info.translation_zh || "-" }}</span>
+        <span>类别: {{ wordTrendResult.info.object_category || "-" }}</span>
+        <span>可毛绒: {{ wordTrendResult.info.plushable || "-" }}</span>
+      </div>
+      <div v-if="compareTrendResults.length" class="compare-word-chips">
+        <button
+          v-for="item in compareTrendResults"
+          :key="`cmp-${item.word}`"
+          class="compare-word-chip"
+          @click="removeCompareTrend(item.word)"
+          title="点击移除该对比词"
+        >
+          {{ item.word }} ×
+        </button>
+      </div>
+      <div v-if="compareTrendResults.length" class="word-trend-meta compare-meta">
+        <span>已添加对比词: {{ compareTrendResults.length }} 个</span>
+      </div>
+      <div v-if="wordTrendError" class="word-trend-error">{{ wordTrendError }}</div>
+      <div v-if="compareTrendError" class="word-trend-error compare-error">{{ compareTrendError }}</div>
+
+      <div class="word-trend-chart-wrap">
+        <div v-if="wordTrendLoading" class="word-trend-loading">加载中...</div>
+        <WordFrequencyTrendChart
+          v-else-if="wordTrendResult && wordTrendResult.points.length"
+          :points="wordTrendResult.points"
+          :primary-word="wordTrendResult.word"
+          :compare-series="compareSeriesForChart"
+        />
+        <div v-else class="word-trend-empty">
+          {{ wordTrendResult ? "未找到该词的词频记录" : "请输入单词进行搜索" }}
+        </div>
+      </div>
+    </section>
+
+    <section class="table-panel" :class="{ 'panel-fullscreen': panelFullscreen }" ref="tablePanelRef">
       <div class="table-panel-header">
         <h2>PostgreSQL 数据表</h2>
         <div class="table-filters">
@@ -43,13 +118,17 @@
           <button class="secondary-btn" @click="exportFullCsv" :disabled="!tableTotal || exportLoading">
             {{ exportLoading ? "导出中..." : "导出完整 CSV" }}
           </button>
+          <button class="secondary-btn" @click="toggleTableFullscreen">
+            {{ panelFullscreen ? "退出全屏" : "全屏" }}
+          </button>
         </div>
       </div>
 
       <details class="column-manager">
-        <summary>列管理（支持记忆）</summary>
+        <summary>列管理</summary>
         <div class="column-actions">
           <button class="secondary-btn" @click="selectAllColumns">全选</button>
+          <button class="secondary-btn" @click="invertColumns">反选</button>
           <button class="secondary-btn" @click="resetColumns">重置</button>
         </div>
         <div class="column-list">
@@ -64,12 +143,17 @@
 
       <div class="table-meta">
         <span>总数: {{ tableTotal }}</span>
-        <span>页码: {{ tablePage }}</span>
+        <span>已加载页: {{ tablePage }}</span>
         <span v-if="sortBy">排序: {{ columnLabel(sortBy) }} {{ sortDir === "asc" ? "升序" : "降序" }}</span>
         <span>表头长按后可左右拖动换列</span>
       </div>
 
-      <div class="table-wrap" :class="{ 'is-loading': tableLoading }" ref="tableWrapRef">
+      <div
+        class="table-wrap"
+        :class="{ 'is-loading': tableLoading }"
+        ref="tableWrapRef"
+        @scroll.passive="onTableWrapScroll"
+      >
         <table class="data-table">
           <thead>
             <tr>
@@ -109,10 +193,58 @@
               <td
                 v-for="col in displayColumns"
                 :key="`${idx}-${col}`"
-                :title="cellToText(getCell(row, col))"
-                :class="{ 'drag-source-col': dragGhost.active && draggingCol === col }"
+                :title="col === 'top3asindtolist' || col === 'top3brands' ? '' : cellToText(getCell(row, col))"
+                :class="{
+                  'drag-source-col': dragGhost.active && draggingCol === col,
+                  'top3-cell': col === 'top3asindtolist' || col === 'top3brands',
+                }"
               >
-                {{ formatCell(getCell(row, col)) }}
+                <template v-if="col === 'top3asindtolist'">
+                  <div class="top3-asin-cell">
+                    <template v-if="parseTop3Asins(getCell(row, col)).length">
+                      <div
+                        v-for="(asinItem, asinIdx) in parseTop3Asins(getCell(row, col))"
+                        :key="`${idx}-${col}-asin-${asinIdx}`"
+                        class="top3-asin-item"
+                      >
+                      <img
+                        v-if="asinItem.imageUrl"
+                        class="top3-asin-image"
+                        :src="asinItem.imageUrl"
+                        :alt="asinItem.asin || `asin-${asinIdx + 1}`"
+                        loading="lazy"
+                        />
+                        <div v-else class="top3-asin-image empty">-</div>
+                        <div class="top3-asin-metric">
+                          <span>点击</span>
+                          <strong>{{ formatPercent(asinItem.clickRate) }}</strong>
+                        </div>
+                        <div class="top3-asin-metric">
+                          <span>转化</span>
+                          <strong>{{ formatPercent(asinItem.conversionRate) }}</strong>
+                        </div>
+                      </div>
+                    </template>
+                    <span v-else>-</span>
+                  </div>
+                </template>
+                <template v-else-if="col === 'top3brands'">
+                  <div class="top3-brand-cell">
+                    <template v-if="parseTop3Brands(getCell(row, col)).length">
+                      <div
+                        v-for="(brand, brandIdx) in parseTop3Brands(getCell(row, col))"
+                        :key="`${idx}-${col}-brand-${brandIdx}`"
+                        class="top3-brand-item"
+                      >
+                        {{ brand }}
+                      </div>
+                    </template>
+                    <span v-else>-</span>
+                  </div>
+                </template>
+                <template v-else>
+                  {{ formatCell(getCell(row, col)) }}
+                </template>
               </td>
             </tr>
           </tbody>
@@ -147,20 +279,43 @@
         class="excel-filter-pop"
         :style="{ left: `${filterMenu.x}px`, top: `${filterMenu.y}px` }"
       >
-        <div class="excel-filter-title">{{ columnLabel(filterMenu.column) }}</div>
+        <div class="excel-filter-title-row">
+          <div class="excel-filter-title">{{ columnLabel(filterMenu.column) }}</div>
+          <div class="excel-filter-count">{{ workingFilterValues.length }} / {{ filterOptions.length }}</div>
+        </div>
         <input
           v-model="filterMenu.keyword"
           class="excel-filter-search"
           placeholder="搜索筛选值"
           @keydown.stop
         />
+        <div class="excel-filter-advanced">
+          <select v-model="filterTextRule.op" class="excel-filter-op">
+            <option v-for="op in textFilterOpOptions" :key="op.value" :value="op.value">
+              {{ op.label }}
+            </option>
+          </select>
+          <input
+            v-if="filterRuleNeedsValue"
+            v-model="filterTextRule.value"
+            class="excel-filter-rule-value"
+            placeholder="条件值"
+            @keydown.stop
+          />
+          <button class="secondary-btn" @click="applyTextRuleFilter">应用条件</button>
+        </div>
         <div class="excel-filter-actions">
           <button class="secondary-btn" @click="selectAllFilterValues">全选</button>
+          <button class="secondary-btn" @click="invertFilterSelection">反选</button>
           <button class="secondary-btn" @click="clearFilterSelection">清空选择</button>
           <button class="secondary-btn" @click="clearColumnFilter">清空筛选</button>
         </div>
         <div class="excel-filter-list">
-          <label v-for="option in visibleFilterOptions" :key="option.value" class="excel-filter-option">
+          <div v-if="filterOptionsLoading" class="excel-filter-loading">
+            <span class="mini-spinner" />
+            <span>加载选项中...</span>
+          </div>
+          <label v-else v-for="option in visibleFilterOptions" :key="option.value" class="excel-filter-option">
             <input
               type="checkbox"
               :checked="workingFilterSet.has(option.value)"
@@ -169,7 +324,7 @@
             <span class="option-label">{{ option.label }}</span>
             <span class="option-count">{{ option.count }}</span>
           </label>
-          <div v-if="!visibleFilterOptions.length" class="excel-filter-empty">无可选值</div>
+          <div v-if="!filterOptionsLoading && !visibleFilterOptions.length" class="excel-filter-empty">无可选值</div>
         </div>
         <div class="excel-filter-footer">
           <button class="secondary-btn" @click="closeFilterMenu">取消</button>
@@ -182,18 +337,15 @@
       <div class="pagination">
         <label class="rows-control">
           显示行数
-          <input v-model.number="tablePageSize" type="number" min="1" step="1" />
+          <input v-model.number.lazy="tablePageSize" type="number" min="1" step="1" />
         </label>
-        <button class="secondary-btn" @click="prevPage" :disabled="tablePage <= 1 || tableLoading">
-          上一页
-        </button>
-        <button
-          class="secondary-btn"
-          @click="nextPage"
-          :disabled="tablePage * tablePageSize >= tableTotal || tableLoading"
-        >
-          下一页
-        </button>
+        <span class="lazy-hint">已加载 {{ tableRows.length }} / {{ tableTotal }}</span>
+        <span v-if="tableLoadingMore" class="lazy-loading-inline">
+          <span class="mini-spinner" />
+          加载更多...
+        </span>
+        <span v-else-if="hasMoreRows" class="lazy-hint">向下滚动到底自动加载</span>
+        <span v-else-if="tableRows.length" class="lazy-hint">已加载全部</span>
       </div>
     </section>
   </main>
@@ -205,15 +357,40 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   createPgExportJob,
   downloadPgExportJob,
+  fetchWordFrequencyTrend,
   fetchPgExportJob,
   fetchPgFilterOptions,
   fetchPgItems,
   fetchPgYearMonths,
 } from "@/api/data";
-import type { PgFilterOption } from "@/types/data";
+import WordFrequencyTrendChart from "@/components/WordFrequencyTrendChart.vue";
+import type { PgFilterOption, WordFrequencyTrendResponse } from "@/types/data";
 
 const COLUMN_PREFS_KEY = "data_hunter.pg.column_prefs.v1";
 const LONG_PRESS_MS = 220;
+type TextFilterOp =
+  | "contains"
+  | "contains_word"
+  | "not_contains"
+  | "starts_with"
+  | "ends_with"
+  | "equals"
+  | "not_equals"
+  | "is_blank"
+  | "is_not_blank";
+type TextFilterRule = { op: TextFilterOp; value?: string };
+type TextFilterValue = string | TextFilterRule;
+const textFilterOpOptions: Array<{ value: TextFilterOp; label: string }> = [
+  { value: "contains", label: "包含" },
+  { value: "contains_word", label: "包含完整词" },
+  { value: "not_contains", label: "不包含" },
+  { value: "starts_with", label: "开头是" },
+  { value: "ends_with", label: "结尾是" },
+  { value: "equals", label: "等于" },
+  { value: "not_equals", label: "不等于" },
+  { value: "is_blank", label: "为空白" },
+  { value: "is_not_blank", label: "非空白" },
+];
 
 const EXCLUDED_COLUMNS = new Set([
   "id",
@@ -257,7 +434,7 @@ const FIELD_LABELS: Record<string, string> = {
   w12searchrank: "12周搜索排名",
   w12rankgrowthvalue: "12周排名变化值",
   w12rankgrowthrate: "12周排名变化率",
-  top3brands: "前3品牌",
+  top3brands: "点击前三品牌",
   bid: "建议竞价",
   bidmax: "最高竞价",
   bidmin: "最低竞价",
@@ -270,19 +447,30 @@ const FIELD_LABELS: Record<string, string> = {
   minexactppc: "精确最小PPC",
   maxexactppc: "精确最大PPC",
   exactppc: "精确PPC",
-  top3asindtolist: "前3ASIN明细",
+  top3asindtolist: "点击前三ASIN",
   trends: "趋势数据",
 };
 
 const exportLoading = ref(false);
 
 const tableLoading = ref(false);
+const tableLoadingMore = ref(false);
 const tableColumns = ref<string[]>([]);
 const tableRows = ref<Record<string, unknown>[]>([]);
 const tableTotal = ref(0);
 const tablePage = ref(1);
-const tablePageSize = ref(20);
+const tablePageSize = ref(100);
 const autoReloadReady = ref(false);
+const suspendAutoReload = ref(false);
+const panelFullscreen = ref(false);
+const wordSearchInput = ref("");
+const wordTrendLoading = ref(false);
+const wordTrendError = ref("");
+const wordTrendResult = ref<WordFrequencyTrendResponse | null>(null);
+const compareWordInput = ref("");
+const compareTrendLoading = ref(false);
+const compareTrendError = ref("");
+const compareTrendResults = ref<WordFrequencyTrendResponse[]>([]);
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -290,9 +478,11 @@ const selectedMonth = ref(0);
 
 const sortBy = ref<string>("id");
 const sortDir = ref<"asc" | "desc">("asc");
+const textFilters = ref<Record<string, TextFilterValue>>({});
 const valueFilters = ref<Record<string, string[]>>({});
 const visibleColumns = ref<string[]>([]);
 
+const tablePanelRef = ref<HTMLElement | null>(null);
 const tableWrapRef = ref<HTMLElement | null>(null);
 const filterMenuRef = ref<HTMLElement | null>(null);
 const draggingCol = ref("");
@@ -312,11 +502,19 @@ const filterMenu = ref({
   y: 0,
   keyword: "",
 });
+const filterTextRule = ref<{ op: TextFilterOp; value: string }>({
+  op: "contains",
+  value: "",
+});
 const filterOptions = ref<PgFilterOption[]>([]);
+const filterOptionsLoading = ref(false);
 const workingFilterValues = ref<string[]>([]);
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
+let activeTableRequestSeq = 0;
+let scrollCheckRaf = 0;
+let activeFilterRequestSeq = 0;
 
 const yearOptions = computed(() => {
   const years = new Set<number>();
@@ -363,11 +561,17 @@ const dragPreviewValues = computed(() => {
 
 const workingFilterSet = computed(() => new Set(workingFilterValues.value));
 
-const visibleFilterOptions = computed(() => {
-  const keyword = filterMenu.value.keyword.trim().toLowerCase();
-  if (!keyword) return filterOptions.value;
-  return filterOptions.value.filter((item) => item.label.toLowerCase().includes(keyword));
-});
+const visibleFilterOptions = computed(() => filterOptions.value);
+const hasMoreRows = computed(() => tableRows.value.length < tableTotal.value);
+const compareSeriesForChart = computed(() =>
+  compareTrendResults.value.map((item) => ({
+    word: item.word,
+    points: item.points || [],
+  }))
+);
+const filterRuleNeedsValue = computed(
+  () => filterTextRule.value.op !== "is_blank" && filterTextRule.value.op !== "is_not_blank"
+);
 
 function columnLabel(col: string): string {
   return FIELD_LABELS[col] || col;
@@ -401,7 +605,11 @@ function syncColumnsState(): void {
 }
 
 function isColumnValueFiltered(col: string): boolean {
-  return Array.isArray(valueFilters.value[col]) && valueFilters.value[col].length > 0;
+  if (Array.isArray(valueFilters.value[col]) && valueFilters.value[col].length > 0) return true;
+  const textFilter = textFilters.value[col];
+  if (!textFilter) return false;
+  if (typeof textFilter === "string") return textFilter.trim().length > 0;
+  return Boolean(textFilter.op);
 }
 
 function moveColumnToInsertIndex(col: string, insertIndex: number): void {
@@ -526,6 +734,119 @@ async function initYearMonthFilters(): Promise<void> {
   selectedMonth.value = latest % 100;
 }
 
+type Top3AsinItem = {
+  asin: string;
+  imageUrl: string;
+  clickRate: number | null;
+  conversionRate: number | null;
+};
+
+function toObjectArray(value: unknown): Record<string, unknown>[] {
+  const pickArrayFromObject = (obj: Record<string, unknown>): Record<string, unknown>[] => {
+    const keys = ["items", "data", "list", "gkdatas", "gkDatas", "top3asindtolist", "top3AsinDtoList", "top3"];
+    for (const key of keys) {
+      const raw = obj[key];
+      if (Array.isArray(raw)) {
+        return raw.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+      }
+    }
+    // Object itself might already be a single row item.
+    if (Object.keys(obj).length) {
+      return [obj];
+    }
+    return [];
+  };
+
+  if (Array.isArray(value)) {
+    return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+  }
+  if (value && typeof value === "object") {
+    return pickArrayFromObject(value as Record<string, unknown>);
+  }
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+      }
+      if (parsed && typeof parsed === "object") {
+        return pickArrayFromObject(parsed as Record<string, unknown>);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function pickNumber(obj: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const raw = obj[key];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const num = Number(raw);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function pickString(obj: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const raw = obj[key];
+    if (raw === null || raw === undefined) continue;
+    const text = String(raw).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function parseTop3Asins(value: unknown): Top3AsinItem[] {
+  const rows = toObjectArray(value);
+  return rows.slice(0, 3).map((item) => ({
+    asin: pickString(item, ["asin", "ASIN", "id"]),
+    imageUrl: pickString(item, ["imageUrl", "image", "img", "image_url"]),
+    clickRate: pickNumber(item, ["clickRate", "click_rate", "clickShareRate", "click_share_rate"]),
+    conversionRate: pickNumber(item, ["conversionRate", "conversion_rate", "cvr", "cvsShareRate"]),
+  }));
+}
+
+function parseTop3Brands(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") {
+          return pickString(item as Record<string, unknown>, ["brand", "name", "label"]);
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      return parseTop3Brands(parsed);
+    } catch {
+      return text
+        .split(/[,\n|]+/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+    }
+  }
+  return [];
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  const normalized = Math.abs(value) <= 1 ? value * 100 : value;
+  return `${normalized.toFixed(2)}%`;
+}
+
 function getCell(row: Record<string, unknown>, key: string): unknown {
   return row[key];
 }
@@ -542,7 +863,7 @@ function formatCell(value: unknown): string {
 }
 
 function getRowSerial(idx: number): number {
-  return (tablePage.value - 1) * tablePageSize.value + idx + 1;
+  return idx + 1;
 }
 
 function normalizedValueFilters(): Record<string, string[]> {
@@ -553,34 +874,82 @@ function normalizedValueFilters(): Record<string, string[]> {
   return output;
 }
 
-async function loadTable(): Promise<void> {
-  tableLoading.value = true;
+function normalizedTextFilters(): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(textFilters.value)) {
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      if (normalized) output[key] = normalized;
+      continue;
+    }
+    if (!value || typeof value !== "object") continue;
+    const op = String(value.op || "").trim() as TextFilterOp;
+    if (!op) continue;
+    if (op === "is_blank" || op === "is_not_blank") {
+      output[key] = { op };
+      continue;
+    }
+    const normalized = String(value.value ?? "").trim();
+    if (normalized) output[key] = { op, value: normalized };
+  }
+  return output;
+}
+
+async function loadTable(options: { append?: boolean } = {}): Promise<void> {
+  const append = options.append === true;
+  if (append) {
+    if (!hasMoreRows.value || tableLoading.value || tableLoadingMore.value) return;
+  }
+
+  const requestPage = append ? tablePage.value + 1 : 1;
+  const requestSeq = ++activeTableRequestSeq;
+  if (append) tableLoadingMore.value = true;
+  else tableLoading.value = true;
+
   try {
     const data = await fetchPgItems({
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
-      page: tablePage.value,
+      page: requestPage,
       pageSize: tablePageSize.value,
       sortBy: sortBy.value || undefined,
       sortDir: sortDir.value,
+      textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
     });
+    if (requestSeq !== activeTableRequestSeq) return;
+
     tableColumns.value = data.columns;
-    tableRows.value = data.items;
     tableTotal.value = data.total;
+    tablePage.value = requestPage;
+    if (append) {
+      if (!data.items.length) {
+        tableTotal.value = tableRows.value.length;
+      } else {
+        tableRows.value = [...tableRows.value, ...data.items];
+      }
+    } else {
+      tableRows.value = data.items;
+    }
     syncColumnsState();
   } finally {
-    tableLoading.value = false;
+    if (append) tableLoadingMore.value = false;
+    else tableLoading.value = false;
+    if (requestSeq === activeTableRequestSeq) scheduleLazyLoadCheck();
   }
 }
 
 async function reloadTable(): Promise<void> {
-  tablePage.value = 1;
-  await loadTable();
+  tablePage.value = 0;
+  if (tableWrapRef.value) {
+    tableWrapRef.value.scrollTop = 0;
+  }
+  await loadTable({ append: false });
 }
 
 function triggerRealtimeReload(): void {
   if (!autoReloadReady.value) return;
+  if (suspendAutoReload.value) return;
   void reloadTable();
 }
 
@@ -604,10 +973,19 @@ function selectAllColumns(): void {
   saveColumnPrefs();
 }
 
+function invertColumns(): void {
+  const available = availableColumns.value;
+  const selected = new Set(visibleColumns.value);
+  const inverted = available.filter((col) => !selected.has(col));
+  visibleColumns.value = inverted.length ? inverted : available.slice(0, 1);
+  saveColumnPrefs();
+}
+
 function resetColumns(): void {
   visibleColumns.value = [...availableColumns.value];
   sortBy.value = "id";
   sortDir.value = "asc";
+  textFilters.value = {};
   valueFilters.value = {};
   saveColumnPrefs();
   void reloadTable();
@@ -620,37 +998,107 @@ async function openFilterMenu(col: string, event: MouseEvent): Promise<void> {
 
   filterMenu.value.open = true;
   filterMenu.value.column = col;
-  filterMenu.value.keyword = "";
-  filterMenu.value.x = Math.max(12, rect.left - 8);
-  filterMenu.value.y = rect.bottom + 8;
-
-  const options = await fetchPgFilterOptions({
-    column: col,
-    year: selectedYear.value || undefined,
-    month: selectedMonth.value || undefined,
-    valueFilters: normalizedValueFilters(),
-    limit: 500,
-  });
-  filterOptions.value = options;
-
-  const exists = valueFilters.value[col];
-  if (exists && exists.length > 0) {
-    workingFilterValues.value = [...exists];
+  const existingTextFilter = textFilters.value[col];
+  if (typeof existingTextFilter === "string") {
+    filterMenu.value.keyword = existingTextFilter;
+    filterTextRule.value = { op: "contains", value: existingTextFilter };
+  } else if (existingTextFilter && typeof existingTextFilter === "object") {
+    const op = (existingTextFilter.op as TextFilterOp) || "contains";
+    const value = String(existingTextFilter.value ?? "");
+    filterTextRule.value = { op, value };
+    filterMenu.value.keyword = op === "contains" ? value : "";
   } else {
-    workingFilterValues.value = options.map((x) => x.value);
+    filterMenu.value.keyword = "";
+    filterTextRule.value = { op: "contains", value: "" };
+  }
+  const menuWidth = 360;
+  const menuHeight = 560;
+  const viewportPadding = 12;
+  const maxX = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+  const preferredX = rect.left - 8;
+  filterMenu.value.x = Math.min(Math.max(viewportPadding, preferredX), maxX);
+
+  const preferredY = rect.bottom + 8;
+  const maxY = window.innerHeight - viewportPadding;
+  if (preferredY + menuHeight <= maxY) {
+    filterMenu.value.y = preferredY;
+  } else {
+    filterMenu.value.y = Math.max(viewportPadding, rect.top - menuHeight - 8);
+  }
+  workingFilterValues.value = [];
+  await loadFilterOptionsForMenu(filterMenu.value.keyword.trim(), true);
+}
+
+function isSameValueSet(values: string[], options: PgFilterOption[]): boolean {
+  if (values.length !== options.length) return false;
+  const set = new Set(values);
+  for (const option of options) {
+    if (!set.has(option.value)) return false;
+  }
+  return true;
+}
+
+async function loadFilterOptionsForMenu(keyword: string, initialize = false): Promise<void> {
+  const col = filterMenu.value.column;
+  if (!col) return;
+
+  const requestSeq = ++activeFilterRequestSeq;
+  filterOptionsLoading.value = true;
+  const existing = valueFilters.value[col];
+  const shouldAutoSelectNext =
+    !existing?.length && isSameValueSet(workingFilterValues.value, filterOptions.value);
+
+  try {
+    const options = await fetchPgFilterOptions({
+      column: col,
+      year: selectedYear.value || undefined,
+      month: selectedMonth.value || undefined,
+      keyword: keyword || undefined,
+      textFilters: normalizedTextFilters(),
+      valueFilters: normalizedValueFilters(),
+      limit: keyword ? 20000 : 500,
+    });
+
+    if (!filterMenu.value.open || filterMenu.value.column !== col) return;
+    if (requestSeq !== activeFilterRequestSeq) return;
+    filterOptions.value = options;
+
+    if (existing && existing.length > 0) {
+      if (initialize && !workingFilterValues.value.length) {
+        workingFilterValues.value = [...existing];
+      }
+      return;
+    }
+    if (initialize || shouldAutoSelectNext) {
+      workingFilterValues.value = options.map((x) => x.value);
+    }
+  } finally {
+    if (requestSeq === activeFilterRequestSeq) {
+      filterOptionsLoading.value = false;
+    }
   }
 }
 
 function closeFilterMenu(): void {
+  activeFilterRequestSeq += 1;
+  filterOptionsLoading.value = false;
   filterMenu.value.open = false;
   filterMenu.value.column = "";
   filterMenu.value.keyword = "";
+  filterTextRule.value = { op: "contains", value: "" };
   filterOptions.value = [];
   workingFilterValues.value = [];
 }
 
 function selectAllFilterValues(): void {
   workingFilterValues.value = filterOptions.value.map((x) => x.value);
+}
+
+function invertFilterSelection(): void {
+  const selected = new Set(workingFilterValues.value);
+  workingFilterValues.value = filterOptions.value
+    .map((option) => option.value)
+    .filter((value) => !selected.has(value));
 }
 
 function clearFilterSelection(): void {
@@ -670,7 +1118,30 @@ function toggleWorkingFilterValue(value: string, event: Event): void {
 
 function clearColumnFilter(): void {
   if (!filterMenu.value.column) return;
+  delete textFilters.value[filterMenu.value.column];
   delete valueFilters.value[filterMenu.value.column];
+  closeFilterMenu();
+  void reloadTable();
+}
+
+function applyTextRuleFilter(): void {
+  const col = filterMenu.value.column;
+  if (!col) return;
+  const op = filterTextRule.value.op;
+  const value = filterTextRule.value.value.trim();
+  if (filterRuleNeedsValue.value && !value) {
+    alert("请输入条件值");
+    return;
+  }
+
+  if (op === "contains") {
+    textFilters.value[col] = value;
+  } else if (op === "is_blank" || op === "is_not_blank") {
+    textFilters.value[col] = { op };
+  } else {
+    textFilters.value[col] = { op, value };
+  }
+  delete valueFilters.value[col];
   closeFilterMenu();
   void reloadTable();
 }
@@ -680,10 +1151,20 @@ function applyFilterMenu(): void {
   if (!col) return;
   const allValues = filterOptions.value.map((x) => x.value);
   const selected = [...new Set(workingFilterValues.value)];
+  const keyword = filterMenu.value.keyword.trim();
+  const keywordActive = keyword.length > 0;
 
-  if (!selected.length || selected.length === allValues.length) {
+  if (!selected.length) {
+    delete textFilters.value[col];
+    delete valueFilters.value[col];
+  } else if (keywordActive && selected.length === allValues.length) {
+    textFilters.value[col] = keyword;
+    delete valueFilters.value[col];
+  } else if (!keywordActive && selected.length === allValues.length) {
+    delete textFilters.value[col];
     delete valueFilters.value[col];
   } else {
+    delete textFilters.value[col];
     valueFilters.value[col] = selected;
   }
   closeFilterMenu();
@@ -709,6 +1190,7 @@ async function exportFullCsv(): Promise<void> {
       month: selectedMonth.value || undefined,
       sortBy: sortBy.value || undefined,
       sortDir: sortDir.value,
+      textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
     });
 
@@ -750,16 +1232,165 @@ async function exportFullCsv(): Promise<void> {
   }
 }
 
-async function prevPage(): Promise<void> {
-  if (tablePage.value <= 1) return;
-  tablePage.value -= 1;
-  await loadTable();
+function isNearBottom(): boolean {
+  const el = tableWrapRef.value;
+  if (!el) return false;
+  const threshold = 220;
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - threshold;
 }
 
-async function nextPage(): Promise<void> {
-  if (tablePage.value * tablePageSize.value >= tableTotal.value) return;
-  tablePage.value += 1;
-  await loadTable();
+async function maybeLoadMoreRows(): Promise<void> {
+  if (!autoReloadReady.value) return;
+  if (!hasMoreRows.value) return;
+  if (tableLoading.value || tableLoadingMore.value) return;
+  if (!isNearBottom()) return;
+  await loadTable({ append: true });
+}
+
+function scheduleLazyLoadCheck(): void {
+  if (scrollCheckRaf) return;
+  scrollCheckRaf = window.requestAnimationFrame(() => {
+    scrollCheckRaf = 0;
+    void maybeLoadMoreRows();
+  });
+}
+
+function onTableWrapScroll(): void {
+  scheduleLazyLoadCheck();
+}
+
+function onFullscreenChange(): void {
+  panelFullscreen.value = document.fullscreenElement === tablePanelRef.value;
+  scheduleLazyLoadCheck();
+}
+
+async function searchWordTrend(): Promise<void> {
+  const word = wordSearchInput.value.trim().toLowerCase();
+  if (!word) return;
+  wordTrendLoading.value = true;
+  wordTrendError.value = "";
+  compareTrendError.value = "";
+  compareTrendResults.value = [];
+  compareWordInput.value = "";
+  try {
+    const data = await fetchWordFrequencyTrend(word);
+    wordTrendResult.value = data;
+
+    const latestYm = Number(data.latest_year_month) || Number(yearMonths.value[0] || 0);
+    suspendAutoReload.value = true;
+    if (latestYm > 0) {
+      selectedYear.value = Math.floor(latestYm / 100);
+      selectedMonth.value = latestYm % 100;
+    }
+    textFilters.value = {
+      keyword: {
+        op: "contains_word",
+        value: word,
+      },
+    };
+    valueFilters.value = {};
+    sortBy.value = "searches";
+    sortDir.value = "desc";
+    closeFilterMenu();
+    suspendAutoReload.value = false;
+    await reloadTable();
+  } catch (error) {
+    console.error("searchWordTrend failed:", error);
+    wordTrendError.value = "查询失败，请稍后重试";
+    wordTrendResult.value = null;
+    suspendAutoReload.value = false;
+  } finally {
+    wordTrendLoading.value = false;
+  }
+}
+
+async function searchCompareTrend(): Promise<void> {
+  const baseWord = wordTrendResult.value?.word?.trim().toLowerCase();
+  if (!baseWord) {
+    compareTrendError.value = "请先查询主词";
+    return;
+  }
+
+  const raw = compareWordInput.value.trim().toLowerCase();
+  if (!raw) {
+    compareTrendError.value = "请输入对比词（可多个）";
+    return;
+  }
+
+  const inputWords = Array.from(
+    new Set(
+      raw
+        .split(/[,\s，]+/)
+        .map((part) => part.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+  if (!inputWords.length) {
+    compareTrendError.value = "请输入有效对比词";
+    return;
+  }
+  const existing = new Set(compareTrendResults.value.map((item) => item.word.toLowerCase()));
+  const words = inputWords.filter((item) => item !== baseWord && !existing.has(item));
+  if (!words.length) {
+    compareTrendError.value = "输入词已存在或与主词相同";
+    return;
+  }
+
+  compareTrendLoading.value = true;
+  compareTrendError.value = "";
+  try {
+    const settled = await Promise.allSettled(words.map((item) => fetchWordFrequencyTrend(item)));
+    const appended: WordFrequencyTrendResponse[] = [];
+    const failed: string[] = [];
+    for (let i = 0; i < settled.length; i += 1) {
+      const result = settled[i];
+      const word = words[i];
+      if (result.status === "fulfilled") {
+        appended.push(result.value);
+      } else {
+        failed.push(word);
+      }
+    }
+    if (appended.length) {
+      compareTrendResults.value = [...compareTrendResults.value, ...appended];
+      compareWordInput.value = "";
+    }
+    if (failed.length) {
+      compareTrendError.value = `以下词查询失败: ${failed.join(", ")}`;
+    }
+  } catch (error) {
+    console.error("searchCompareTrend failed:", error);
+    compareTrendError.value = "对比查询失败，请稍后重试";
+  } finally {
+    compareTrendLoading.value = false;
+  }
+}
+
+function clearCompareTrend(): void {
+  compareTrendResults.value = [];
+  compareTrendError.value = "";
+  compareWordInput.value = "";
+}
+
+function removeCompareTrend(word: string): void {
+  compareTrendResults.value = compareTrendResults.value.filter((item) => item.word !== word);
+}
+
+async function toggleTableFullscreen(): Promise<void> {
+  const panel = tablePanelRef.value;
+  if (!panel) return;
+  try {
+    if (document.fullscreenElement === panel) {
+      await document.exitFullscreen();
+      return;
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    }
+    await panel.requestFullscreen();
+  } catch (error) {
+    console.error("toggleTableFullscreen failed:", error);
+  }
 }
 
 watch(selectedYear, () => {
@@ -790,9 +1421,21 @@ watch(sortFieldOptions, (options) => {
   }
 });
 
+watch(
+  () => filterMenu.value.keyword,
+  (keyword) => {
+    if (!filterMenu.value.open || !filterMenu.value.column) return;
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      void loadFilterOptionsForMenu(keyword.trim(), false);
+    }, 220);
+  }
+);
+
 onMounted(async () => {
   loadColumnPrefs();
   document.addEventListener("pointerdown", handleDocumentPointerDown);
+  document.addEventListener("fullscreenchange", onFullscreenChange);
   try {
     await initYearMonthFilters();
   } catch (error) {
@@ -804,6 +1447,7 @@ onMounted(async () => {
     console.error("loadTable failed:", error);
   }
   autoReloadReady.value = true;
+  scheduleLazyLoadCheck();
 });
 
 onBeforeUnmount(() => {
@@ -812,12 +1456,239 @@ onBeforeUnmount(() => {
   clearDragState();
   cleanupDragHandlers();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  document.removeEventListener("fullscreenchange", onFullscreenChange);
+  if (scrollCheckRaf) {
+    window.cancelAnimationFrame(scrollCheckRaf);
+    scrollCheckRaf = 0;
+  }
 });
 </script>
 
 <style scoped>
+.word-trend-panel {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, #eef4ff 0%, #f5f9ff 100%);
+  border-radius: 14px;
+  border: 1px solid #d4e2fb;
+  box-shadow: 0 8px 24px rgba(31, 64, 131, 0.06);
+}
+
+.word-trend-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.word-trend-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  padding: 8px;
+  border: 1px solid #d6e3ff;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  max-width: 100%;
+}
+
+.word-trend-input {
+  width: min(290px, 45vw);
+  min-width: 180px;
+  height: 36px;
+  border: 1px solid #b8c8ea;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.word-trend-input:focus {
+  border-color: #3f6fda;
+  box-shadow: 0 0 0 3px rgba(63, 111, 218, 0.16);
+}
+
+.trend-search-btn {
+  margin-top: 0;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 14px rgba(33, 89, 219, 0.22);
+}
+
+.compare-word-input {
+  min-width: 240px;
+}
+
+.trend-compare-btn,
+.trend-clear-btn {
+  height: 36px;
+  margin-top: 0;
+}
+
+.compare-word-chips {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.compare-word-chip {
+  border: 1px solid #d7e7fb;
+  background: #f4f8ff;
+  color: #264782;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.compare-word-chip:hover {
+  background: #e9f1ff;
+  border-color: #b8cff3;
+}
+
+.word-trend-meta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #243650;
+  font-size: 13px;
+}
+
+.word-trend-meta span {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid #d8e5fe;
+}
+
+.compare-meta span {
+  border-color: #cdebd6;
+  background: rgba(237, 252, 242, 0.8);
+}
+
+.word-trend-error {
+  margin-top: 8px;
+  color: #be2c2c;
+  font-size: 13px;
+  background: #fff1f1;
+  border: 1px solid #ffcfd0;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.compare-error {
+  background: #f2fbff;
+  border-color: #c9e6ff;
+  color: #215f8c;
+}
+
+.word-trend-chart-wrap {
+  margin-top: 10px;
+  min-height: 320px;
+  background: #fff;
+  border: 1px solid #d6e0f1;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.word-trend-loading,
+.word-trend-empty {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5c6b84;
+  font-size: 14px;
+}
+
+.data-table td:not(.top3-cell) {
+  vertical-align: middle !important;
+}
+
+.top3-cell {
+  white-space: normal !important;
+  min-width: 280px;
+  vertical-align: middle;
+}
+
+.top3-asin-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 74px;
+}
+
+.top3-asin-item {
+  width: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.top3-asin-image {
+  width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #d8e4fb;
+  background: #fff;
+}
+
+.top3-asin-image.empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #7a8aa8;
+  font-size: 12px;
+}
+
+.top3-asin-metric {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #253758;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.top3-asin-metric strong {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.top3-brand-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 74px;
+  justify-content: center;
+}
+
+.top3-brand-item {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f3b73;
+  line-height: 1.2;
+}
+
 .table-wrap {
   position: relative;
+  overflow: auto;
+  max-height: 62vh;
+  transition: filter 0.18s ease, opacity 0.18s ease;
 }
 
 .table-wrap.is-loading .data-table {
@@ -850,6 +1721,184 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: #1f2f4a;
   font-weight: 600;
+}
+
+.excel-filter-advanced {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f6f9ff;
+  border: 1px solid #e0e9fb;
+}
+
+.excel-filter-op {
+  min-width: 116px;
+  height: 34px;
+  border: 1px solid #c8d7f3;
+  border-radius: 8px;
+  padding: 0 8px;
+  background: #fff;
+}
+
+.excel-filter-rule-value {
+  flex: 1;
+  min-width: 100px;
+  height: 34px;
+  border: 1px solid #c8d7f3;
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.excel-filter-pop {
+  width: 360px;
+  border: 1px solid #c8d6f0;
+  border-radius: 12px;
+  box-shadow: 0 24px 46px rgba(23, 41, 78, 0.22);
+}
+
+.excel-filter-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #e6edf9;
+}
+
+.excel-filter-title {
+  padding: 0;
+  border: 0;
+}
+
+.excel-filter-count {
+  font-size: 12px;
+  color: #35528d;
+  background: #edf3ff;
+  border: 1px solid #cfddf8;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.excel-filter-search {
+  margin: 10px 10px 0;
+  border-radius: 8px;
+  border: 1px solid #c8d6f0;
+  height: 36px;
+}
+
+.excel-filter-search:focus {
+  outline: none;
+  border-color: #3f6fda;
+  box-shadow: 0 0 0 3px rgba(63, 111, 218, 0.16);
+}
+
+.excel-filter-actions {
+  margin: 8px 10px 0;
+  gap: 6px;
+}
+
+.excel-filter-actions .secondary-btn {
+  padding: 0.38rem 0.6rem;
+  border-radius: 7px;
+}
+
+.excel-filter-list {
+  margin: 8px 10px 0;
+  border-radius: 9px;
+}
+
+.excel-filter-option {
+  padding: 0.46rem 0.5rem;
+  transition: background 0.15s ease;
+}
+
+.excel-filter-option:hover {
+  background: #f6f9ff;
+}
+
+.excel-filter-option input {
+  accent-color: #315fcd;
+}
+
+.excel-filter-loading {
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #375181;
+  font-size: 13px;
+}
+
+.table-panel:fullscreen,
+.table-panel.panel-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 18px;
+  border-radius: 0;
+  background: #eef4ff;
+  overflow: hidden;
+}
+
+.table-panel:fullscreen .table-wrap,
+.table-panel.panel-fullscreen .table-wrap {
+  max-height: calc(100vh - 235px);
+  overflow: auto;
+}
+
+.table-panel:fullscreen .data-table thead th,
+.table-panel.panel-fullscreen .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+.lazy-hint {
+  color: #5c6b84;
+  font-size: 13px;
+}
+
+.lazy-loading-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #234796;
+  font-size: 13px;
+}
+
+.mini-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(35, 71, 150, 0.25);
+  border-top-color: #234796;
+  animation: table-loading-spin 0.8s linear infinite;
+}
+
+@media (max-width: 900px) {
+  .word-trend-controls {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .word-trend-input {
+    flex: 1 1 260px;
+    min-width: 0;
+    width: auto;
+  }
+
+  .excel-filter-pop {
+    width: min(92vw, 360px);
+  }
+
 }
 
 @keyframes table-loading-spin {

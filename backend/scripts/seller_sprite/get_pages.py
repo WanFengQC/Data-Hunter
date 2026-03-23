@@ -4,6 +4,7 @@ import time
 import requests
 import sys
 import random
+import threading
 from datetime import datetime, timedelta
 
 cookies = {
@@ -24,17 +25,18 @@ cookies = {
     'Hm_lvt_e0dfc78949a2d7c553713cb5c573a486': '1773740929,1773797927',
     'HMACCOUNT': 'DB02FE95993721CC',
     '_gcl_au': '1.1.1318762765.1773740930.651287507.1773822643.1773822643',
-    '_clck': '1flo5tj%5E2%5Eg4h%5E0%5E2190',
-    '_gaf_fp': '455a17718beb8a36bf29435f86ff5725',
-    'rank-login-user': '7061793771oz23MDxrTgP6kWHXUJLLK/DSf55LOREy8fxqwhq7G6tCEhsCKQFesqXtl19b1c6j',
-    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjcwNjE3OTM3NzFvejIzTUR4clRnUDZrV0hYVUpMTEsvRFNmNTVMT1JFeThmeHF3aHE3RzZ0Q0Voc0NLUUZlc3FYdGwxOWIxYzZqIn0="',
-    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiI3TnJQNlhsOGxRMjY2R3YybjAzb01BIiwiaWF0IjoxNzczOTE0MDA3LCJleHAiOjE3NzQwMDA0MDcsIm5iZiI6MTc3MzkxMzk0Nywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IlMiLCJlbmQiOjE3NzQyNTk2MDcxMjh9.UF1tnqbTSjP1I7cDgJGQk_Pz7_W18_Svu8fXMobPZY3Oef-4V0gZwseSE97nhskaD_Jsi58M6rrXIKzYp-u5xWfs7TcEf3DFNeSulZybGrsMHhbegJAq5PVt6U9YS3XaHIzrbMBs3-hKwPrzYGOZxmLluYZtOYNP63hSDJSF7CYXDzNFG4UzX8Seb12K0sEwDvRD1IkWPGQIx26IYh90AfkbAKgS9MF1dqTJjVUfM3SiSiRjSgoWSWbATR6TTe7X7e1oAiqqLHlWaIEQ9hpkc1O0qlwt3JKRCTMKXNzFhpNUYEg3aL4pLK5_7JktLxoQdMEwIoKBilhpQCDmNLnZRg',
-    'JSESSIONID': 'B0EE4FCAAF988416EF4C9C935C46F120',
     'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773914012',
-    '_ga_CN0F80S6GL': 'GS2.1.s1773912139$o21$g1$t1773914031$j60$l0$h0',
-    '_clsk': '1pgmwu6%5E1773914453175%5E14%5E0%5Ez.clarity.ms%2Fcollect',
-    '_ga_38NCVF2XST': 'GS2.1.s1773912139$o24$g1$t1773914453$j60$l0$h772020937',
+    '_clck': '1flo5tj%5E2%5Eg4l%5E0%5E2190',
+    'JSESSIONID': '40F5887223F941245EC843049D8E1F23',
+    '_gaf_fp': '32377257e53f20077d2c76b215243113',
+    'rank-login-user': '67258247711AM3XqydNMOsmTu6s34fdfcZ3ci9jbFnG7eekZ5CpYV4c2QjWRrPR47eZOQBqeVI',
+    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjY3MjU4MjQ3NzExQU0zWHF5ZE5NT3NtVHU2czM0ZmRmY1ozY2k5amJGbkc3ZWVrWjVDcFlWNGMyUWpXUnJQUjQ3ZVpPUUJxZVZJIn0="',
+    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJKdnBTYzRkVWdTYVFqY2VoQzFqbzBBIiwiaWF0IjoxNzc0MjI3Njc2LCJleHAiOjE3NzQzMTQwNzYsIm5iZiI6MTc3NDIyNzYxNiwic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IkcifQ.WeQybV79qDxSHuR4edR1QfcV083IulicW14yiIWU85R113tTUy7NqVIAC21xSAoL2yXJ-ypdDsh8Ktpx1lJhHResT_YbSyPG-8T0sDGNl_tjJJsb62aL5_BWMybfkAyiJsqt9UhajCuSpSGQONdDwym0vL2Sbbuo-coOQV-eBt7kwUKWUWHoBFcxrSCKNc0ppu5eqQkPbvW_KzmWs9TJfPo7qiALK5wU97_UYSYyD9bGfbHpuOR69T5Qd6gF19YZvGsBBRIDQPW_e-1Zq9zbY5B5oKDeOO7SoUeBGAqz8l3UFNkJdcIoUcQaQR-8tOaBPQIt9kv0WcbbOt1RD8goOA',
+    '_ga_38NCVF2XST': 'GS2.1.s1774227623$o26$g1$t1774227679$j4$l0$h967807551',
+    '_clsk': 'gznq8p%5E1774227679905%5E3%5E0%5Ez.clarity.ms%2Fcollect',
+    '_ga_CN0F80S6GL': 'GS2.1.s1774227623$o22$g1$t1774227682$j1$l0$h0',
 }
+
 
 headers = {
     'accept': 'application/json, text/plain, */*',
@@ -62,7 +64,7 @@ json_data = {
     'movementMarket': '',
     'market': 'COM',
     'q': '',
-    'table': 'ara_202508',
+    'table': 'ara_202506',
     'reverseType': 'M',
     'departments': [
         'toys-and-games',
@@ -75,7 +77,7 @@ json_data = {
 }
 
 url = 'https://www.sellersprite.com/v3/api/aba-research'
-save_dir = 'ara_202508'
+save_dir = 'ara_202506'
 
 os.makedirs(save_dir, exist_ok=True)
 
@@ -97,25 +99,71 @@ def wait_for_manual_exit():
         pass
 
 
+def wait_retry_or_enter(wait_seconds: int) -> bool:
+    """
+    返回 True 表示用户按回车手动跳过等待；
+    返回 False 表示等待结束进入自动重试。
+    """
+    print('等待期间按回车可立即重试（本次不计入自动暂停次数）。')
+    deadline = time.time() + wait_seconds
+
+    # Windows 控制台：非阻塞检测回车
+    try:
+        import msvcrt  # type: ignore
+
+        while time.time() < deadline:
+            while msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ('\r', '\n'):
+                    return True
+            time.sleep(0.2)
+        return False
+    except Exception:
+        pass
+
+    # 兜底方案：后台线程阻塞等 input
+    skip_event = threading.Event()
+
+    def _wait_input():
+        try:
+            input()
+            skip_event.set()
+        except Exception:
+            pass
+
+    threading.Thread(target=_wait_input, daemon=True).start()
+    while time.time() < deadline:
+        if skip_event.is_set():
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def handle_pause_retry(reason=''):
     global pause_times
-    pause_times += 1
-
-    if pause_times > MAX_PAUSE_TIMES:
-        print(f'暂停次数已超过 {MAX_PAUSE_TIMES} 次，程序自动退出。')
-        sys.exit(1)
 
     wait_seconds = random.randint(PAUSE_RETRY_MIN_SECONDS, PAUSE_RETRY_MAX_SECONDS)
     wait_minutes = wait_seconds // 60
+    now = datetime.now()
     retry_at = datetime.now() + timedelta(seconds=wait_seconds)
 
     if reason:
         print(reason)
 
-    print(f'程序暂停，第 {pause_times}/{MAX_PAUSE_TIMES} 次。')
+    print(f'当前时间: {now:%Y-%m-%d %H:%M:%S}')
+    next_auto_pause = pause_times + 1
+    print(f'程序暂停。若不手动跳过，本次将记为自动暂停第 {next_auto_pause}/{MAX_PAUSE_TIMES} 次。')
     print(f'将在 {wait_minutes} 分钟后自动重试，预计重试时间: {retry_at:%Y-%m-%d %H:%M:%S}')
-    time.sleep(wait_seconds)
-    print('开始自动重试...')
+    skipped = wait_retry_or_enter(wait_seconds)
+    if skipped:
+        print('检测到回车，已跳过等待并继续执行（本次不计入自动暂停次数）。')
+        return
+
+    pause_times += 1
+    if pause_times >= MAX_PAUSE_TIMES:
+        print(f'自动暂停已达到 {MAX_PAUSE_TIMES} 次，程序自动退出。')
+        sys.exit(1)
+    print(f'开始自动重试...（已累计自动暂停 {pause_times}/{MAX_PAUSE_TIMES} 次）')
 
 
 def stop_program(msg=''):

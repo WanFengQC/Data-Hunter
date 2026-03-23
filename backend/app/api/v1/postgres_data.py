@@ -8,8 +8,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.core.config import settings
 from app.services.export_jobs import pg_export_jobs
 from app.services.postgres_table import (
+    fetch_asin_aba_history,
+    fetch_asin_detail,
     fetch_filter_options,
     fetch_items,
+    fetch_word_frequency_trend,
     stream_items_csv,
     fetch_year_months,
 )
@@ -17,13 +20,24 @@ from app.services.postgres_table import (
 router = APIRouter(prefix="/pg", tags=["postgres"])
 
 
-def _parse_text_filters(raw: str | None) -> dict[str, str]:
+def _parse_text_filters(raw: str | None) -> dict[str, Any]:
     if not raw:
         return {}
     parsed = json.loads(raw)
     if not isinstance(parsed, dict):
         return {}
-    return {str(k): str(v) for k, v in parsed.items()}
+    output: dict[str, Any] = {}
+    for key, value in parsed.items():
+        key_str = str(key)
+        if isinstance(value, dict):
+            op = str(value.get("op") or "contains").strip().lower()
+            item: dict[str, Any] = {"op": op}
+            if "value" in value and value.get("value") is not None:
+                item["value"] = str(value.get("value"))
+            output[key_str] = item
+        elif value is not None:
+            output[key_str] = str(value)
+    return output
 
 
 def _parse_value_filters(raw: str | None) -> dict[str, list[str]]:
@@ -52,13 +66,73 @@ def list_year_months(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/word-frequency-trend")
+def get_word_frequency_trend(
+    word: str = Query(..., min_length=1),
+    schema: str = Query(default=settings.pg_schema),
+    freq_table: str = Query(default="seller_sprite_word_frequency"),
+    cache_table: str = Query(default="seller_sprite_word_cache"),
+    items_table: str = Query(default=settings.pg_table),
+) -> dict:
+    try:
+        return fetch_word_frequency_trend(
+            schema_name=schema,
+            freq_table_name=freq_table,
+            cache_table_name=cache_table,
+            items_table_name=items_table,
+            word=word,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/asin-aba-history")
+def get_asin_aba_history(
+    keyword: str = Query(..., min_length=1),
+    asin: str = Query(..., min_length=1),
+    limit_months: int = Query(default=36, ge=1, le=120),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default=settings.pg_table),
+) -> dict:
+    try:
+        return fetch_asin_aba_history(
+            schema_name=schema,
+            table_name=table,
+            keyword=keyword,
+            asin=asin,
+            limit_months=limit_months,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/asin-detail")
+def get_asin_detail(
+    asin: str = Query(..., min_length=1),
+    keyword: str | None = Query(default=None),
+    year_month: int | None = Query(default=None, ge=200001, le=210012),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default=settings.pg_table),
+) -> dict:
+    try:
+        return fetch_asin_detail(
+            schema_name=schema,
+            table_name=table,
+            asin=asin,
+            year_month=year_month,
+            keyword=keyword,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/filter-options")
 def list_filter_options(
     column: str = Query(...),
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
     keyword: str | None = Query(default=None),
-    limit: int = Query(default=300, ge=10, le=1000),
+    limit: int = Query(default=300, ge=10, le=20000),
     text_filters: str | None = Query(default=None),
     value_filters: str | None = Query(default=None),
     schema: str = Query(default=settings.pg_schema),

@@ -1,4 +1,6 @@
 import csv
+import json
+import re
 from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
@@ -80,7 +82,7 @@ def _build_time_clauses(year: int | None, month: int | None) -> tuple[list[sql.S
 
 
 def _build_text_filter_clauses(
-    text_filters: dict[str, str],
+    text_filters: dict[str, Any],
     valid_columns: set[str],
 ) -> tuple[list[sql.SQL], list[Any]]:
     clauses: list[sql.SQL] = []
@@ -89,11 +91,66 @@ def _build_text_filter_clauses(
     for key, raw_value in text_filters.items():
         if key not in valid_columns:
             continue
-        value = str(raw_value).strip()
-        if not value:
+        col_text = sql.SQL("CAST({} AS TEXT)").format(sql.Identifier(key))
+
+        # Backward-compatible: plain string means "contains"
+        if isinstance(raw_value, str):
+            value = raw_value.strip()
+            if not value:
+                continue
+            clauses.append(sql.SQL("{} ILIKE %s").format(col_text))
+            params.append(f"%{value}%")
             continue
-        clauses.append(sql.SQL("CAST({} AS TEXT) ILIKE %s").format(sql.Identifier(key)))
-        params.append(f"%{value}%")
+
+        if not isinstance(raw_value, dict):
+            continue
+
+        op = str(raw_value.get("op") or "contains").strip().lower()
+        value = str(raw_value.get("value") or "").strip()
+
+        if op == "contains":
+            if not value:
+                continue
+            clauses.append(sql.SQL("{} ILIKE %s").format(col_text))
+            params.append(f"%{value}%")
+        elif op == "not_contains":
+            if not value:
+                continue
+            clauses.append(sql.SQL("{} NOT ILIKE %s").format(col_text))
+            params.append(f"%{value}%")
+        elif op == "starts_with":
+            if not value:
+                continue
+            clauses.append(sql.SQL("{} ILIKE %s").format(col_text))
+            params.append(f"{value}%")
+        elif op == "ends_with":
+            if not value:
+                continue
+            clauses.append(sql.SQL("{} ILIKE %s").format(col_text))
+            params.append(f"%{value}")
+        elif op == "contains_word":
+            if not value:
+                continue
+            # Match whole token boundaries, e.g. car matches "remote car" but not "card".
+            pattern = rf"(^|[^[:alnum:]_]){re.escape(value)}([^[:alnum:]_]|$)"
+            clauses.append(sql.SQL("{} ~* %s").format(col_text))
+            params.append(pattern)
+        elif op == "equals":
+            if not value:
+                continue
+            clauses.append(sql.SQL("lower({}) = lower(%s)").format(col_text))
+            params.append(value)
+        elif op == "not_equals":
+            if not value:
+                continue
+            clauses.append(
+                sql.SQL("({} IS NULL OR lower({}) <> lower(%s))").format(sql.Identifier(key), col_text)
+            )
+            params.append(value)
+        elif op == "is_blank":
+            clauses.append(sql.SQL("({} IS NULL OR {} = '')").format(sql.Identifier(key), col_text))
+        elif op == "is_not_blank":
+            clauses.append(sql.SQL("({} IS NOT NULL AND {} <> '')").format(sql.Identifier(key), col_text))
 
     return clauses, params
 
@@ -140,7 +197,7 @@ def _build_where_sql(
     year: int | None,
     month: int | None,
     valid_columns: set[str],
-    text_filters: dict[str, str] | None = None,
+    text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
     exclude_value_filter_column: str | None = None,
 ) -> tuple[sql.SQL, list[Any]]:
@@ -176,7 +233,26 @@ def _build_order_sql(
     direction = sql.SQL("ASC") if str(sort_dir).lower() == "asc" else sql.SQL("DESC")
     if sort_by and sort_by in valid_columns:
         if column_types.get(sort_by) == "jsonb":
-            order_expr = sql.SQL("CAST({} AS TEXT)").format(sql.Identifier(sort_by))
+            # JSONB columns in this table often store numeric metrics.
+            # Sort by numeric value first; fallback to text for non-numeric JSON.
+            numeric_expr = sql.SQL(
+                """
+                CASE
+                    WHEN jsonb_typeof({col}) = 'number' THEN ({col}::text)::numeric
+                    WHEN jsonb_typeof({col}) = 'string'
+                         AND trim(both '"' from {col}::text) ~ '^-?\\d+(\\.\\d+)?$'
+                    THEN trim(both '"' from {col}::text)::numeric
+                    ELSE NULL
+                END
+                """
+            ).format(col=sql.Identifier(sort_by))
+            text_expr = sql.SQL("trim(both '\"' from {}::text)").format(sql.Identifier(sort_by))
+            return sql.SQL(" ORDER BY {} {} NULLS LAST, {} {} NULLS LAST").format(
+                numeric_expr,
+                direction,
+                text_expr,
+                direction,
+            )
         else:
             order_expr = sql.Identifier(sort_by)
         return sql.SQL(" ORDER BY {} {} NULLS LAST").format(order_expr, direction)
@@ -206,12 +282,12 @@ def fetch_filter_options(
     column: str,
     year: int | None = None,
     month: int | None = None,
-    text_filters: dict[str, str] | None = None,
+    text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
     keyword: str | None = None,
     limit: int = 300,
 ) -> list[dict[str, Any]]:
-    limit = min(max(limit, 10), 1000)
+    limit = min(max(limit, 10), 20000)
 
     with pg_connect() as conn:
         if not _table_exists(conn, schema_name, table_name):
@@ -222,11 +298,18 @@ def fetch_filter_options(
         if column not in valid_columns:
             return []
 
+        merged_text_filters: dict[str, Any] = {}
+        if text_filters:
+            merged_text_filters.update(text_filters)
+        keyword_norm = (keyword or "").strip()
+        if keyword_norm:
+            merged_text_filters[column] = keyword_norm
+
         where_sql, where_params = _build_where_sql(
             year=year,
             month=month,
             valid_columns=valid_columns,
-            text_filters=text_filters,
+            text_filters=merged_text_filters,
             value_filters=value_filters,
             exclude_value_filter_column=column,
         )
@@ -253,12 +336,9 @@ def fetch_filter_options(
             rows = cur.fetchall()
 
     result: list[dict[str, Any]] = []
-    keyword_norm = (keyword or "").strip().lower()
     for row in rows:
         value = row["value"]
         label = "(空白)" if value == BLANK_TOKEN else str(value)
-        if keyword_norm and keyword_norm not in label.lower():
-            continue
         result.append(
             {
                 "value": value,
@@ -278,15 +358,15 @@ def fetch_items(
     month: int | None = None,
     sort_by: str | None = None,
     sort_dir: str = "desc",
-    filters: dict[str, str] | None = None,  # backward-compatible alias
-    text_filters: dict[str, str] | None = None,
+    filters: dict[str, Any] | None = None,  # backward-compatible alias
+    text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     page = max(page, 1)
     page_size = max(page_size, 1)
     offset = (page - 1) * page_size
 
-    merged_text_filters: dict[str, str] = {}
+    merged_text_filters: dict[str, Any] = {}
     if filters:
         merged_text_filters.update(filters)
     if text_filters:
@@ -361,11 +441,11 @@ def fetch_all_items(
     month: int | None = None,
     sort_by: str | None = None,
     sort_dir: str = "desc",
-    filters: dict[str, str] | None = None,  # backward-compatible alias
-    text_filters: dict[str, str] | None = None,
+    filters: dict[str, Any] | None = None,  # backward-compatible alias
+    text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    merged_text_filters: dict[str, str] = {}
+    merged_text_filters: dict[str, Any] = {}
     if filters:
         merged_text_filters.update(filters)
     if text_filters:
@@ -431,14 +511,14 @@ def stream_items_csv(
     month: int | None = None,
     sort_by: str | None = None,
     sort_dir: str = "desc",
-    filters: dict[str, str] | None = None,  # backward-compatible alias
-    text_filters: dict[str, str] | None = None,
+    filters: dict[str, Any] | None = None,  # backward-compatible alias
+    text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
     chunk_rows: int = 2000,
 ) -> Iterator[str]:
     chunk_rows = max(100, int(chunk_rows or 2000))
 
-    merged_text_filters: dict[str, str] = {}
+    merged_text_filters: dict[str, Any] = {}
     if filters:
         merged_text_filters.update(filters)
     if text_filters:
@@ -505,3 +585,402 @@ def stream_items_csv(
                 chunk = flush_buffer()
                 if chunk:
                     yield chunk
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_word_frequency_trend(
+    schema_name: str,
+    freq_table_name: str,
+    cache_table_name: str,
+    items_table_name: str,
+    word: str,
+) -> dict[str, Any]:
+    normalized_word = str(word or "").strip().lower()
+    if not normalized_word:
+        return {"word": "", "info": {}, "points": [], "latest_year_month": None}
+
+    freq_points: list[dict[str, Any]] = []
+    info: dict[str, Any] = {}
+    latest_year_month: int | None = None
+
+    with pg_connect() as conn:
+        has_freq_table = _table_exists(conn, schema_name, freq_table_name)
+        if has_freq_table:
+            points_query = sql.SQL(
+                """
+                SELECT
+                    year_month,
+                    year,
+                    month,
+                    freq,
+                    freq_ratio,
+                    coverage,
+                    total_searches,
+                    word_zh,
+                    category,
+                    plushable
+                FROM {}.{}
+                WHERE word = %s
+                ORDER BY year_month ASC
+                """
+            ).format(sql.Identifier(schema_name), sql.Identifier(freq_table_name))
+            with conn.cursor() as cur:
+                cur.execute(points_query, (normalized_word,))
+                rows = cur.fetchall()
+                for row in rows:
+                    ym = _to_int(row.get("year_month"))
+                    point = {
+                        "year_month": ym,
+                        "year": _to_int(row.get("year")),
+                        "month": _to_int(row.get("month")),
+                        "freq": _to_int(row.get("freq")),
+                        "freq_ratio": _to_float(row.get("freq_ratio")),
+                        "coverage": _to_int(row.get("coverage")),
+                        "total_searches": _to_float(row.get("total_searches")),
+                        "rank": None,
+                        "rank_growth_rate": None,
+                        "searches_growth_rate": None,
+                    }
+                    freq_points.append(point)
+                    if ym is not None:
+                        latest_year_month = ym
+
+                if rows:
+                    latest_row = rows[-1]
+                    info = {
+                        "translation_zh": latest_row.get("word_zh"),
+                        "object_category": latest_row.get("category"),
+                        "plushable": latest_row.get("plushable"),
+                        "plushable_bool": None,
+                    }
+
+        if _table_exists(conn, schema_name, cache_table_name):
+            cache_query = sql.SQL(
+                """
+                SELECT translation_zh, object_category, plushable, plushable_bool
+                FROM {}.{}
+                WHERE word = %s
+                LIMIT 1
+                """
+            ).format(sql.Identifier(schema_name), sql.Identifier(cache_table_name))
+            with conn.cursor() as cur:
+                cur.execute(cache_query, (normalized_word,))
+                row = cur.fetchone()
+                if row:
+                    info = {
+                        "translation_zh": row.get("translation_zh"),
+                        "object_category": row.get("object_category"),
+                        "plushable": row.get("plushable"),
+                        "plushable_bool": row.get("plushable_bool"),
+                    }
+
+        # `items_table_name` kept for API compatibility, but trend query has been removed.
+        points = freq_points
+
+    return {
+        "word": normalized_word,
+        "info": info,
+        "points": points,
+        "latest_year_month": latest_year_month,
+    }
+
+
+def _normalize_asin(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _normalize_keyword_text(value: Any) -> str:
+    return str(value or "").replace("\ufffc", "").strip().lower()
+
+
+def _parse_gkdatas_rows(value: Any) -> list[dict[str, Any]]:
+    parsed = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    if isinstance(parsed, dict):
+        for key in ("items", "data", "list", "gkdatas"):
+            val = parsed.get(key)
+            if isinstance(val, list):
+                return [item for item in val if isinstance(item, dict)]
+    return []
+
+
+def _parse_top3_asin_rows(value: Any) -> list[dict[str, Any]]:
+    parsed = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    if isinstance(parsed, dict):
+        for key in ("items", "data", "list", "top3", "top3asindtolist"):
+            val = parsed.get(key)
+            if isinstance(val, list):
+                return [item for item in val if isinstance(item, dict)]
+    return []
+
+
+def _extract_top3_rank(top3_value: Any, asin_norm: str) -> int | None:
+    rows = _parse_top3_asin_rows(top3_value)
+    if not rows:
+        return None
+    for idx, item in enumerate(rows, start=1):
+        item_asin = _normalize_asin(item.get("asin"))
+        if item_asin == asin_norm:
+            return idx
+    return None
+
+
+def _parse_brand_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if str(v).strip()]
+        except json.JSONDecodeError:
+            pass
+        return [x.strip() for x in re.split(r"[,\n|]+", text) if x.strip()]
+    return []
+
+
+def _extract_top3_brand_hint(top3_asin_value: Any, top3_brands_value: Any, asin_norm: str) -> str:
+    rows = _parse_top3_asin_rows(top3_asin_value)
+    brands = _parse_brand_list(top3_brands_value)
+    if not rows or not brands:
+        return ""
+    for idx, item in enumerate(rows):
+        item_asin = _normalize_asin(item.get("asin"))
+        if item_asin == asin_norm and idx < len(brands):
+            return brands[idx]
+    return ""
+
+
+def fetch_asin_aba_history(
+    schema_name: str,
+    table_name: str,
+    keyword: str,
+    asin: str,
+    limit_months: int = 36,
+) -> dict[str, Any]:
+    keyword_norm = _normalize_keyword_text(keyword)
+    asin_norm = _normalize_asin(asin)
+    if not keyword_norm or not asin_norm:
+        return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
+
+    with pg_connect() as conn:
+        if not _table_exists(conn, schema_name, table_name):
+            return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
+
+        column_meta = _get_column_meta(conn, schema_name, table_name)
+        columns = {row["column_name"] for row in column_meta}
+        if "keyword" not in columns or "top3asindtolist" not in columns or "year_month" not in columns:
+            return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
+
+        query = sql.SQL(
+            """
+            SELECT year_month, id, top3asindtolist
+            FROM {}.{}
+            WHERE lower(trim(both '"' from replace(CAST(keyword AS TEXT), chr(65532), ''))) = %s
+              AND top3asindtolist IS NOT NULL
+            ORDER BY year_month DESC, id ASC
+            LIMIT 5000
+            """
+        ).format(sql.Identifier(schema_name), sql.Identifier(table_name))
+
+        with conn.cursor() as cur:
+            cur.execute(query, (keyword_norm,))
+            rows = cur.fetchall()
+
+    month_rank: dict[int, int] = {}
+    for row in rows:
+        ym = _to_int(row.get("year_month"))
+        if ym is None or ym <= 0:
+            continue
+        if ym in month_rank:
+            continue
+        rank = _extract_top3_rank(row.get("top3asindtolist"), asin_norm)
+        if rank is None:
+            continue
+        month_rank[ym] = rank
+
+    yms = sorted(month_rank.keys(), reverse=True)
+    if limit_months > 0:
+        yms = yms[:limit_months]
+
+    items = [
+        {
+            "year_month": ym,
+            "label": f"{ym // 100}-{ym % 100:02d}",
+            "rank": month_rank.get(ym),
+        }
+        for ym in yms
+    ]
+    return {
+        "keyword": keyword_norm,
+        "asin": asin_norm,
+        "count": len(items),
+        "items": items,
+    }
+
+
+def fetch_asin_detail(
+    schema_name: str,
+    table_name: str,
+    asin: str,
+    year_month: int | None = None,
+    keyword: str | None = None,
+    limit_rows: int = 3000,
+) -> dict[str, Any]:
+    asin_norm = _normalize_asin(asin)
+    keyword_norm = _normalize_keyword_text(keyword or "") if keyword else ""
+    if not asin_norm:
+        return {"asin": "", "found": False, "detail": None}
+
+    with pg_connect() as conn:
+        if not _table_exists(conn, schema_name, table_name):
+            return {"asin": asin_norm, "found": False, "detail": None}
+
+        column_meta = _get_column_meta(conn, schema_name, table_name)
+        columns = {row["column_name"] for row in column_meta}
+        required_columns = {"year_month", "keyword", "gkdatas"}
+        if not required_columns.issubset(columns):
+            return {"asin": asin_norm, "found": False, "detail": None}
+
+        has_top3 = "top3asindtolist" in columns and "top3brands" in columns
+
+        select_cols = ["id", "year_month", "keyword", "gkdatas"]
+        if has_top3:
+            select_cols.extend(["top3asindtolist", "top3brands"])
+        query = (
+            sql.SQL("SELECT {} FROM {}.{} WHERE gkdatas IS NOT NULL AND CAST(gkdatas AS TEXT) ILIKE %s").format(
+                sql.SQL(", ").join(sql.Identifier(col) for col in select_cols),
+                sql.Identifier(schema_name),
+                sql.Identifier(table_name),
+            )
+        )
+        params: list[Any] = [f"%{asin_norm}%"]
+
+        if year_month is not None:
+            query += sql.SQL(" AND year_month = %s")
+            params.append(year_month)
+
+        query += sql.SQL(" ORDER BY year_month DESC, id DESC LIMIT %s")
+        params.append(max(100, min(int(limit_rows or 3000), 10000)))
+
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+    best_score: tuple[int, int, int, int] | None = None
+    best_detail: dict[str, Any] | None = None
+
+    for row in rows:
+        ym = _to_int(row.get("year_month")) or 0
+        row_keyword = _normalize_keyword_text(row.get("keyword"))
+        keyword_hit = 1 if keyword_norm and row_keyword == keyword_norm else 0
+
+        top3_brand_hint = ""
+        if "top3asindtolist" in row and "top3brands" in row:
+            top3_brand_hint = _extract_top3_brand_hint(
+                row.get("top3asindtolist"),
+                row.get("top3brands"),
+                asin_norm,
+            )
+
+        for item in _parse_gkdatas_rows(row.get("gkdatas")):
+            item_asin = _normalize_asin(item.get("asin"))
+            if item_asin != asin_norm:
+                continue
+
+            title = str(item.get("asinTitle") or item.get("asinUrl") or "").strip()
+            image_url = str(item.get("asinImage") or item.get("bigAsinImage") or "").strip()
+            brand = str(item.get("asinBrand") or item.get("brand") or top3_brand_hint or "").strip()
+            station = str(item.get("station") or "").strip()
+            badges = str(item.get("badges") or "").strip()
+            price = _to_float(item.get("asinPrice"))
+            rating = _to_float(item.get("asinRating"))
+            reviews = _to_int(item.get("asinReviews"))
+            position = _to_int(item.get("position")) or _to_int(item.get("rankIndex")) or _to_int(item.get("rank"))
+            rank_page = _to_int(item.get("rankPage"))
+            products = _to_int(item.get("products"))
+
+            completeness = sum(
+                1
+                for value in (
+                    title,
+                    image_url,
+                    brand,
+                    station,
+                    badges,
+                    price,
+                    rating,
+                    reviews,
+                    position,
+                    rank_page,
+                    products,
+                )
+                if value not in ("", None)
+            )
+
+            score = (keyword_hit, completeness, ym, -(position or 10**9))
+            if best_score is None or score > best_score:
+                best_score = score
+                best_detail = {
+                    "asin": asin_norm,
+                    "title": title,
+                    "imageUrl": image_url,
+                    "brand": brand,
+                    "station": station,
+                    "badges": badges,
+                    "price": price,
+                    "rating": rating,
+                    "reviews": reviews,
+                    "position": position,
+                    "rankPage": rank_page,
+                    "products": products,
+                    "year_month": ym if ym > 0 else None,
+                    "keyword": row_keyword or None,
+                }
+
+    return {
+        "asin": asin_norm,
+        "found": best_detail is not None,
+        "detail": best_detail,
+    }

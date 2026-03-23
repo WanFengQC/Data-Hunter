@@ -4,6 +4,7 @@ import type {
   PgFilterOptionsResponse,
   PgItemsResponse,
   ProcessedSummary,
+  WordFrequencyTrendResponse,
   YearMonthsResponse,
 } from "@/types/data";
 
@@ -21,6 +22,13 @@ export async function fetchPgYearMonths(): Promise<number[]> {
   return data.items;
 }
 
+export async function fetchWordFrequencyTrend(word: string): Promise<WordFrequencyTrendResponse> {
+  const { data } = await apiClient.get<WordFrequencyTrendResponse>("/pg/word-frequency-trend", {
+    params: { word },
+  });
+  return data;
+}
+
 export async function fetchPgItems(params: {
   year?: number;
   month?: number;
@@ -28,7 +36,7 @@ export async function fetchPgItems(params: {
   pageSize?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
-  textFilters?: Record<string, string>;
+  textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
 }): Promise<PgItemsResponse> {
   const payload: Record<string, unknown> = {
@@ -58,7 +66,7 @@ export async function exportPgItemsCsv(params: {
   month?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
-  textFilters?: Record<string, string>;
+  textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
 }): Promise<Blob> {
   const payload: Record<string, unknown> = {
@@ -98,7 +106,7 @@ export async function createPgExportJob(params: {
   month?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
-  textFilters?: Record<string, string>;
+  textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
 }): Promise<PgExportJob> {
   const payload: Record<string, unknown> = {
@@ -140,7 +148,7 @@ export async function fetchPgFilterOptions(params: {
   month?: number;
   keyword?: string;
   limit?: number;
-  textFilters?: Record<string, string>;
+  textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
 }): Promise<PgFilterOption[]> {
   const payload: Record<string, unknown> = {
