@@ -29,16 +29,16 @@ cookies = {
     'HMACCOUNT': 'DB02FE95993721CC',
     '_gcl_au': '1.1.1318762765.1773740930.651287507.1773822643.1773822643',
     '_clck': '1flo5tj%5E2%5Eg4m%5E0%5E2190',
-    '_gaf_fp': 'e1bd3e6bd55428528752c0fbac779c2a',
-    'rank-login-user': '71627347715cRWjZUY4KjUE4ItMqRTYyRvJmNIl39Yxr8FiJu0T0CEJl67/6vmp+E58Ql7uuUc',
-    'rank-login-user-info': '"eyJuaWNrbmFtZSI6Ik5pdW5pdWRhZGR5MDAxIiwiaXNBZG1pbiI6ZmFsc2UsImFjY291bnQiOiJOaXVuaXVkYWRkeTAwMSIsInRva2VuIjoiNzE2MjczNDc3MTVjUldqWlVZNEtqVUU0SXRNcVJUWXlSdkptTklsMzlZeHI4RmlKdTBUMENFSmw2Ny82dm1wK0U1OFFsN3V1VWMifQ=="',
-    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJKM1ZEMngxSFQ5dWR1UjRqT1JsSUh3IiwiaWF0IjoxNzc0MzE1MDE3LCJleHAiOjE3NzQ0MDE0MTcsIm5iZiI6MTc3NDMxNDk1Nywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTAwNTQ0MywicGkiOjk5NjkyNywibm4iOiJOaXVuaXVkYWRkeTAwMSIsInN5cyI6IlNTX0NOIiwiZWQiOiJOIiwiZW0iOiJOaXVuaXVkYWRkeTAwMUBzZWxsZXJzcHJpdGUuY29tIiwibWwiOiJTIiwiZW5kIjoxNzgyODY4NjE3NjIyfQ.cHaCzDIOmAVR8MR0GPNczezPTgzzyXsD7xFIUVsF4imsIYOXncifeWrdFRsorTcpB1u8k3WXzMv876nB6g6Gq5dHLpAAM7fr4LmRK6MB2l31WN5rRpVjvcrtKSOtNWJhZNdrpVdeKoekmTckYw91vZJC7kgeg9Otcn0TwfnXVBNoyKseQhxbApG-KgwPW3VcIaWcbwSw81qTGyLqfzSd8f3g-gCZYWErdmawpbgR0ReIhyTxk8K3h2OEPYZqpJTi5cFnnZc5tUMw54CMxn8Hf9Ghxv-2s6NWtWv0pfZwfkmD0czZfgY85p-HwGG3QIrwF-_gO4Aexe4jbSPLVy76QQ',
-    'ao_lo_to_n': '71627347715cRWjZUY4KjUE4ItMqRTY4Y7ERcFDV5Fzrg5QlqgVVV23kIUjfawIm+z/qzekMbJ9XsfWaZf/po7xsZxphvTZc0BM+AUIO6SIGXWPwy8VsVpmDkIee+XpD8bSvfLZW9Z',
-    'JSESSIONID': 'F4C504C73D7112A101D2D56E044A94C4',
     'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1774315021',
-    '_ga_CN0F80S6GL': 'GS2.1.s1774315008$o25$g1$t1774315033$j35$l0$h0',
-    '_clsk': '187kq7j%5E1774315035704%5E6%5E0%5Ez.clarity.ms%2Fcollect',
-    '_ga_38NCVF2XST': 'GS2.1.s1774315008$o30$g1$t1774315035$j33$l0$h1926338943',
+    'JSESSIONID': '88D57B7929C180684B5CBB912DC8D4CC',
+    '_gaf_fp': 'e7933d24a0e9f1bfa9f41859a1cd5ef5',
+    'rank-login-user': '1142834771CE0ZkivBTt/+ELvpbAlm6UZyeeF8F96lhgA3XXetIVaMC4ytVvUUS9n5te8fBR7p',
+    'rank-login-user-info': '"eyJuaWNrbmFtZSI6Ik5pdW5pdWRhZGR5MDAxIiwiaXNBZG1pbiI6ZmFsc2UsImFjY291bnQiOiJOaXVuaXVkYWRkeTAwMSIsInRva2VuIjoiMTE0MjgzNDc3MUNFMFpraXZCVHQvK0VMdnBiQWxtNlVaeWVlRjhGOTZsaGdBM1hYZXRJVmFNQzR5dFZ2VVVTOW41dGU4ZkJSN3AifQ=="',
+    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiIyUTY4cnpmdUx1N1Voa25OMWxPUHhRIiwiaWF0IjoxNzc0MzI0ODExLCJleHAiOjE3NzQ0MTEyMTEsIm5iZiI6MTc3NDMyNDc1MSwic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTAwNTQ0MywicGkiOjk5NjkyNywibm4iOiJOaXVuaXVkYWRkeTAwMSIsInN5cyI6IlNTX0NOIiwiZWQiOiJOIiwiZW0iOiJOaXVuaXVkYWRkeTAwMUBzZWxsZXJzcHJpdGUuY29tIiwibWwiOiJTIiwiZW5kIjoxNzgyODc4NDExNjU0fQ.C6F0CsBo3hPEp4g33dBr2nqlZ1jynMGsnMP-Ve_aHnZu8APc5D4EAahqwZ9F-jAkzqDJ18u8yMTXRuq3DSg7Ec9wMRckJEiCt0VYr55Pd-YAT9H3ZptGEYBZgpz9MbVvygoVJTFQmUes2HyUDeBaDNw1kvxCF35zTm9sjHHlZ6ZAs8_ZRP_-f9-z79JYzjWLdl_ZNEz8ogW9K37xMOzYANsVFn4R7_4q2Y5TipeiKQjzyS1s8YOnhFiQUDzwM3eg14Znjj_Ymq61CVVttbV_h0hxXxym9GkFPNgN9pJdyuifNYWpu2goMXDd20v1ZIEXNJJrOVmZYjsLA629-VYCdg',
+    'ao_lo_to_n': '1142834771CE0ZkivBTt/+ELvpbAlm6Vv5hFvN405byIJk0G1TD4u/5cHGcAlewhCt3BoALIVe5/mWML9jaEXn6/9kwvYHzC0jebYYBVOFPZltiD+vEdvO8AJ5fSnzTwHU57EnmfjH',
+    '_ga_38NCVF2XST': 'GS2.1.s1774331004$o33$g1$t1774331006$j58$l0$h1210554953',
+    '_ga_CN0F80S6GL': 'GS2.1.s1774331004$o27$g1$t1774331009$j55$l0$h0',
+    '_clsk': 'fcgf2f%5E1774331013673%5E2%5E0%5Ez.clarity.ms%2Fcollect',
 }
 
 
@@ -242,6 +242,15 @@ def is_success_text(text: str) -> bool:
     return obj.get('code') == 'OK' and obj.get('message') == '成功'
 
 
+def is_session_expired_text(text: str) -> bool:
+    obj = parse_json_safe(text)
+    if not obj:
+        return False
+    code = str(obj.get('code') or '').strip()
+    message = str(obj.get('message') or '').strip()
+    return code == 'ERR_GLOBAL_SESSION_EXPIRED' or message == '登录已失效。'
+
+
 def is_valid_file(file_path: str) -> bool:
     if not os.path.exists(file_path):
         return False
@@ -296,6 +305,9 @@ def fetch_and_save(table_name: str, page: int, save_dir: str) -> str:
         print(f'[{table_name}] Page {page} returned non-success status, stop now.')
         print(f'HTTP status code: {response.status_code}')
         print_error_detail(text)
+        if is_session_expired_text(text):
+            print(f'[{table_name}] session expired, exit immediately without retry.')
+            sys.exit(1)
         stop_program(f'[{table_name}] response is not {{"code":"OK","message":"??"}}, paused.')
 
     file_path = os.path.join(save_dir, f'keywords_page_{page}.html')

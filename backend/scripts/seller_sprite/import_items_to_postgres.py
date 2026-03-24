@@ -22,7 +22,15 @@ ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
 # =========================
 # If CLI args `--folder/--folders` are not provided, these folders will be used.
 # Example: ["ara_202512"] or ["ara_202512", "ara_202601"]
-IMPORT_FOLDERS: list[str] = ["ara_202503"]
+IMPORT_FOLDERS: list[str] = ["ara_202503","ara_202504","ara_202505","ara_202506","ara_202507","ara_202508","ara_202509",
+                             "ara_202510","ara_202511","ara_202512","ara_202601","ara_202602"]
+
+# Optional search rank filter. When enabled, only import items whose searchRank
+# is strictly less than SEARCH_RANK_LIMIT.
+ENABLE_SEARCH_RANK_FILTER = True
+SEARCH_RANK_LIMIT = 100_000
+DEFAULT_DB_NAME = "hunter"
+FILTERED_DB_NAME = "hunter_new"
 
 
 def load_env_files() -> None:
@@ -142,6 +150,42 @@ def parse_json_payload(raw_text: str) -> dict:
             return {}
 
 
+def safe_int(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_search_rank(item: dict) -> int | None:
+    for key in ("searchRank", "searchrank", "search_frequency_rank", "searchFrequencyRank"):
+        if key in item:
+            return safe_int(item.get(key))
+    return None
+
+
+def should_keep_item(item: dict) -> bool:
+    if not ENABLE_SEARCH_RANK_FILTER:
+        return True
+
+    rank = extract_search_rank(item)
+    if rank is None:
+        return False
+    return rank < SEARCH_RANK_LIMIT
+
+
 def load_items_from_file(file_path: Path) -> tuple[list[dict], int | None]:
     text = file_path.read_text(encoding="utf-8", errors="ignore")
     payload = parse_json_payload(text)
@@ -159,7 +203,10 @@ def load_items_from_file(file_path: Path) -> tuple[list[dict], int | None]:
     except (TypeError, ValueError):
         page_no = page_no_from_filename(file_path.name)
 
-    dict_items = [item for item in items if isinstance(item, dict)]
+    dict_items = [
+        item for item in items
+        if isinstance(item, dict) and should_keep_item(item)
+    ]
     return dict_items, page_no
 
 
@@ -220,7 +267,7 @@ def pg_connect() -> psycopg.Connection:
     user = os.getenv("PG_USER", "postgres")
     password = os.getenv("PG_PASS", "")
     port = int(os.getenv("PG_PORT", "5432"))
-    dbname = os.getenv("PG_DB", "postgres")
+    dbname = FILTERED_DB_NAME if ENABLE_SEARCH_RANK_FILTER else DEFAULT_DB_NAME
     return psycopg.connect(
         host=host,
         user=user,
@@ -374,6 +421,16 @@ def main() -> None:
     print("Import folder order:")
     for index, folder in enumerate(folders, start=1):
         print(f"{index}. {folder}")
+
+    target_db = FILTERED_DB_NAME if ENABLE_SEARCH_RANK_FILTER else DEFAULT_DB_NAME
+    print(f"Target database: {target_db}")
+    if ENABLE_SEARCH_RANK_FILTER:
+        print(
+            f"Search rank filter: enabled, import only items with "
+            f"searchRank < {SEARCH_RANK_LIMIT}"
+        )
+    else:
+        print("Search rank filter: disabled, import all items")
 
     item_keys = discover_item_keys(folders)
     if not item_keys:

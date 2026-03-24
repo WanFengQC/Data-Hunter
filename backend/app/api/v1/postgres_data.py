@@ -103,7 +103,7 @@ def get_growth_top10(
     table: str = Query(default="seller_sprite_word_frequency"),
 ) -> dict:
     mode_norm = str(mode or "monthly").strip().lower()
-    if mode_norm not in {"monthly", "quarterly"}:
+    if mode_norm not in {"monthly", "quarterly", "searches"}:
         raise HTTPException(status_code=400, detail="Invalid growth mode")
     if search_min is not None and search_max is not None and search_min > search_max:
         raise HTTPException(status_code=400, detail="search_min cannot be greater than search_max")

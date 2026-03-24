@@ -512,6 +512,7 @@ def fetch_growth_top10_items(
     sort_by_map = {
         "monthly": "total_searches_growth_rate",
         "quarterly": "total_searches_quarter_avg_growth_rate",
+        "searches": "total_searches",
     }
     sort_by = sort_by_map.get(str(mode).lower(), "total_searches_growth_rate")
     limit = max(1, min(int(limit or 10), 100))

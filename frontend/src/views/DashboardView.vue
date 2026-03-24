@@ -104,10 +104,15 @@
         </div>
       </div>
 
-      <div v-if="!wordTrendResult" class="keyword-top10-empty">查询关键词后显示 Top10 数据</div>
+      <div v-if="!wordTrendResult" class="keyword-top10-empty">查询关键词后显示关键词数据</div>
       <div v-else-if="activeTop10Data?.loading" class="keyword-top10-loading">Top10 加载中...</div>
       <div v-else-if="activeTop10Data?.error" class="keyword-top10-error">{{ activeTop10Data.error }}</div>
-      <div v-else-if="activeTop10Data && activeTop10Data.items.length" class="keyword-top10-wrap">
+      <div
+        v-else-if="activeTop10Data && activeTop10Data.items.length"
+        class="table-wrap keyword-top10-wrap"
+        ref="top10WrapRef"
+        @scroll.passive="onTop10WrapScroll"
+      >
         <table class="data-table keyword-top10-table">
           <thead>
             <tr>
@@ -196,8 +201,9 @@
             </tr>
           </tbody>
         </table>
+        <div v-if="activeTop10Data.loadingMore" class="keyword-top10-loading more">加载更多中...</div>
       </div>
-      <div v-else class="keyword-top10-empty">该词未找到 Top10 数据</div>
+      <div v-else class="keyword-top10-empty">该词未找到关键词数据</div>
     </section>
 
     <section class="keyword-top10-panel growth-top10-panel">
@@ -216,6 +222,13 @@
             @click="switchGrowthTop10Mode('quarterly')"
           >
             季度增长率TOP10
+          </button>
+          <button
+            class="keyword-top10-tab"
+            :class="{ active: growthTop10Mode === 'searches' }"
+            @click="switchGrowthTop10Mode('searches')"
+          >
+            总搜索量TOP10
           </button>
         </div>
         <div class="table-filters growth-top10-filters">
@@ -628,6 +641,7 @@ const ABA_FIXED_COLUMNS = [
   "trends",
 ];
 const TOP10_VISIBLE_COLUMNS = [...ABA_FIXED_COLUMNS];
+const TOP10_PAGE_SIZE = 20;
 const GROWTH_TOP10_VISIBLE_COLUMNS = [
   "word",
   "word_zh",
@@ -636,7 +650,7 @@ const GROWTH_TOP10_VISIBLE_COLUMNS = [
   "total_searches_growth_rate",
   "total_searches_quarter_avg_growth_rate",
 ];
-type GrowthTop10Mode = "monthly" | "quarterly";
+type GrowthTop10Mode = "monthly" | "quarterly" | "searches";
 type TextFilterOp =
   | "contains"
   | "contains_word"
@@ -711,7 +725,7 @@ const FIELD_LABELS: Record<string, string> = {
   w1rankgrowthrate: "1周排名变化率",
   w4searchrank: "4周搜索排名",
   w4rankgrowthvalue: "4周排名变化值",
-  w4rankgrowthrate: "4周排名变化率",
+  w4rankgrowthrate: "4月排名变化率",
   w12searchrank: "12周搜索排名",
   w12rankgrowthvalue: "12周排名变化值",
   w12rankgrowthrate: "12周排名变化率",
@@ -779,9 +793,13 @@ type KeywordTop10State = {
   keyword: string;
   yearMonth: number | null;
   loading: boolean;
+  loadingMore: boolean;
   error: string;
   columns: string[];
   items: Record<string, unknown>[];
+  page: number;
+  pageSize: number;
+  total: number;
 };
 const keywordTop10Map = ref<Record<string, KeywordTop10State>>({});
 const activeTop10Word = ref("");
@@ -808,6 +826,7 @@ const orderedColumns = ref<string[]>([]);
 
 const tablePanelRef = ref<HTMLElement | null>(null);
 const tableWrapRef = ref<HTMLElement | null>(null);
+const top10WrapRef = ref<HTMLElement | null>(null);
 const filterMenuRef = ref<HTMLElement | null>(null);
 const draggingCol = ref("");
 const dragGhost = ref({
@@ -839,6 +858,7 @@ let filterTimer: ReturnType<typeof setTimeout> | null = null;
 let growthTop10FilterTimer: ReturnType<typeof setTimeout> | null = null;
 let activeTableRequestSeq = 0;
 let scrollCheckRaf = 0;
+let top10ScrollCheckRaf = 0;
 let activeFilterRequestSeq = 0;
 let activeGrowthTop10RequestSeq = 0;
 
@@ -943,6 +963,11 @@ const activeTop10Data = computed(() => {
   if (!key) return null;
   return keywordTop10Map.value[key] || null;
 });
+const activeTop10HasMore = computed(() => {
+  const data = activeTop10Data.value;
+  if (!data) return false;
+  return data.total > 0 && data.items.length < data.total;
+});
 const activeTop10Columns = computed(() => {
   const data = activeTop10Data.value;
   if (!data) return [] as string[];
@@ -955,7 +980,11 @@ const activeTop10Columns = computed(() => {
   return TOP10_VISIBLE_COLUMNS.filter((col) => availableSet.has(col));
 });
 const growthTop10SortField = computed(() =>
-  growthTop10Mode.value === "monthly" ? "total_searches_growth_rate" : "total_searches_quarter_avg_growth_rate"
+  growthTop10Mode.value === "monthly"
+    ? "total_searches_growth_rate"
+    : growthTop10Mode.value === "quarterly"
+      ? "total_searches_quarter_avg_growth_rate"
+      : "total_searches"
 );
 const growthTop10Columns = computed(() => {
   const availableSet = new Set(growthTop10ColumnsRaw.value);
@@ -1304,29 +1333,46 @@ async function switchGrowthTop10Mode(mode: GrowthTop10Mode): Promise<void> {
   await loadGrowthTop10();
 }
 
-async function fetchKeywordTop10(word: string, latestYearMonth?: number | null): Promise<void> {
+async function fetchKeywordTop10(
+  word: string,
+  latestYearMonth?: number | null,
+  options: { append?: boolean } = {}
+): Promise<void> {
   const key = normalizeWordKey(word);
   if (!key) return;
 
   const prev = keywordTop10Map.value[key];
+  const append = options.append === true;
+  if (append) {
+    if (!prev || prev.loading || prev.loadingMore) return;
+    if (prev.total > 0 && prev.items.length >= prev.total) return;
+  }
+
+  const targetYearMonth = latestYearMonth ?? prev?.yearMonth ?? null;
+  const nextPage = append ? Math.max(1, (prev?.page || 1) + 1) : 1;
+  const pageSize = prev?.pageSize || TOP10_PAGE_SIZE;
   keywordTop10Map.value = {
     ...keywordTop10Map.value,
     [key]: {
       keyword: key,
-      yearMonth: latestYearMonth ?? prev?.yearMonth ?? null,
-      loading: true,
+      yearMonth: targetYearMonth,
+      loading: !append,
+      loadingMore: append,
       error: "",
       columns: prev?.columns ?? [],
       items: prev?.items ?? [],
+      page: append ? prev?.page || 1 : 0,
+      pageSize,
+      total: prev?.total ?? 0,
     },
   };
 
   try {
-    const { year, month } = parseYearMonth(latestYearMonth ?? null);
+    const { year, month } = parseYearMonth(targetYearMonth);
     const data = await fetchPgItems({
       table: DATA_TABLES.aba.tableName,
-      page: 1,
-      pageSize: 10,
+      page: nextPage,
+      pageSize,
       year,
       month,
       sortBy: "searches",
@@ -1339,16 +1385,21 @@ async function fetchKeywordTop10(word: string, latestYearMonth?: number | null):
       },
       valueFilters: {},
     });
-    const items: Record<string, unknown>[] = (data.items || []).slice(0, 10);
+    const incomingItems: Record<string, unknown>[] = data.items || [];
+    const items = append ? [...(prev?.items || []), ...incomingItems] : incomingItems;
     keywordTop10Map.value = {
       ...keywordTop10Map.value,
       [key]: {
         keyword: key,
-        yearMonth: latestYearMonth ?? null,
+        yearMonth: targetYearMonth,
         loading: false,
+        loadingMore: false,
         error: "",
         columns: data.columns || [],
         items,
+        page: Number(data.page || nextPage),
+        pageSize: Number(data.page_size || pageSize),
+        total: Number(data.total || 0),
       },
     };
   } catch (error) {
@@ -1357,14 +1408,45 @@ async function fetchKeywordTop10(word: string, latestYearMonth?: number | null):
       ...keywordTop10Map.value,
       [key]: {
         keyword: key,
-        yearMonth: latestYearMonth ?? null,
+        yearMonth: targetYearMonth,
         loading: false,
-        error: "Top10 查询失败，请稍后重试",
-        columns: [],
-        items: [],
+        loadingMore: false,
+        error: "关键词数据查询失败，请稍后重试",
+        columns: prev?.columns || [],
+        items: prev?.items || [],
+        page: prev?.page || 0,
+        pageSize,
+        total: prev?.total || 0,
       },
     };
   }
+}
+
+function isTop10NearBottom(): boolean {
+  const el = top10WrapRef.value;
+  if (!el) return false;
+  const threshold = 220;
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - threshold;
+}
+
+async function maybeLoadMoreTop10Rows(): Promise<void> {
+  const data = activeTop10Data.value;
+  if (!data || !activeTop10HasMore.value) return;
+  if (data.loading || data.loadingMore) return;
+  if (!isTop10NearBottom()) return;
+  await fetchKeywordTop10(data.keyword, data.yearMonth, { append: true });
+}
+
+function scheduleTop10LazyLoadCheck(): void {
+  if (top10ScrollCheckRaf) return;
+  top10ScrollCheckRaf = window.requestAnimationFrame(() => {
+    top10ScrollCheckRaf = 0;
+    void maybeLoadMoreTop10Rows();
+  });
+}
+
+function onTop10WrapScroll(): void {
+  scheduleTop10LazyLoadCheck();
 }
 
 function buildAsinUrl(asinRaw: string): string {
@@ -2095,6 +2177,10 @@ onBeforeUnmount(() => {
     window.cancelAnimationFrame(scrollCheckRaf);
     scrollCheckRaf = 0;
   }
+  if (top10ScrollCheckRaf) {
+    window.cancelAnimationFrame(top10ScrollCheckRaf);
+    top10ScrollCheckRaf = 0;
+  }
 });
 </script>
 
@@ -2381,6 +2467,11 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   color: #556480;
   font-size: 13px;
+}
+
+.keyword-top10-loading.more {
+  padding: 10px 0 2px;
+  text-align: center;
 }
 
 .keyword-top10-error {

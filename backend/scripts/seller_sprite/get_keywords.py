@@ -1,4 +1,5 @@
-﻿import asyncio
+﻿import argparse
+import asyncio
 import json
 import os
 import re
@@ -19,6 +20,56 @@ from deepseek_classify_batch import async_client as deepseek_async_client
 # =========================
 # 配置
 # =========================
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Calculate word frequency csv from SellerSprite ABA folders. "
+            "Supports multiple folders and writes one csv per folder."
+        )
+    )
+    parser.add_argument(
+        "--base-dir",
+        default=str(ARA_BASE_DIR),
+        help="Base directory containing month folders (default: D:\ara).",
+    )
+    parser.add_argument(
+        "--folders",
+        nargs="+",
+        help="Folders to process in exact order, e.g. --folders ara_202503 ara_202504",
+    )
+    parser.add_argument(
+        "--folder",
+        action="append",
+        default=[],
+        help="Single folder to process. Can be used multiple times.",
+    )
+    return parser.parse_args()
+
+
+def resolve_folders(base_dir: Path, folders: list[str] | None) -> list[Path]:
+    if folders:
+        resolved: list[Path] = []
+        for item in folders:
+            candidate = Path(item)
+            if not candidate.is_absolute():
+                candidate = base_dir / item
+            candidate = candidate.resolve()
+            if not candidate.exists() or not candidate.is_dir():
+                raise FileNotFoundError(f"Folder not found: {candidate}")
+            resolved.append(candidate)
+        return resolved
+
+    auto = [p for p in base_dir.iterdir() if p.is_dir() and p.name.startswith("ara_")]
+    return sorted(auto, key=lambda p: p.name)
+
+
+def build_output_file(folder: Path) -> str:
+    match = re.search(r"(\d{6})", folder.name)
+    suffix = match.group(1) if match else folder.name
+    mode_suffix = "lt100k" if ENABLE_SEARCH_RANK_FILTER else "all"
+    return str(BASE_DIR / f"word_frequency_analysis_{suffix}_{mode_suffix}.csv")
+
 
 def get_env_int(name, default):
     try:
@@ -52,6 +103,28 @@ def safe_float(value, default=0.0):
         return default
 
 
+def safe_int(value, default=None):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return default
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return default
+
+
 def resolve_worker_count(total_batches, requested_workers, auto_workers, max_workers):
     if total_batches <= 0:
         return 1
@@ -66,8 +139,23 @@ def resolve_worker_count(total_batches, requested_workers, auto_workers, max_wor
 
 BASE_DIR = Path(__file__).resolve().parent
 ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
-INPUT_DIR = ARA_BASE_DIR / "ara_202503"
-OUTPUT_FILE = "word_frequency_analysis_202503.csv"
+
+# If CLI args `--folder/--folders` are not provided, these folders will be used.
+# Example: ["ara_202503"] or ["ara_202503", "ara_202504"]
+INPUT_FOLDERS: list[str] = [
+    "ara_202503",
+    "ara_202504",
+    "ara_202505",
+    "ara_202506",
+    "ara_202507",
+    "ara_202508",
+    "ara_202509",
+    "ara_202510",
+    "ara_202511",
+    "ara_202512",
+    "ara_202601",
+    "ara_202602",
+]
 
 TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
 OBJECT_CACHE_FILE = BASE_DIR / "object_category_cache.json"
@@ -90,6 +178,11 @@ DEEPSEEK_DEBUG_LOG_FILE = BASE_DIR / "deepseek_prompt_debug.log"
 USE_LOCAL_TAG_KB = str(os.getenv("USE_LOCAL_TAG_KB", "0")).strip().lower() in {"1", "true", "yes", "y", "on"}
 TO_LOWER = True
 REMOVE_STOPWORDS = True
+
+# Optional search rank filter. When enabled, only count keywords whose
+# searchRank is strictly less than SEARCH_RANK_LIMIT.
+ENABLE_SEARCH_RANK_FILTER = True
+SEARCH_RANK_LIMIT = 100_000
 
 STOPWORDS = {
     "",
@@ -359,6 +452,25 @@ def normalize_cache_key(word):
 
 def is_true_flag(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def extract_search_rank(item):
+    if not isinstance(item, dict):
+        return None
+    for key in ("searchRank", "searchrank", "search_frequency_rank", "searchFrequencyRank"):
+        if key in item:
+            return safe_int(item.get(key))
+    return None
+
+
+def should_keep_keyword_item(item):
+    if not ENABLE_SEARCH_RANK_FILTER:
+        return True
+
+    rank = extract_search_rank(item)
+    if rank is None:
+        return False
+    return rank < SEARCH_RANK_LIMIT
 
 
 def debug_deepseek_prompt(scope, model, system_prompt, user_prompt, words):
@@ -1030,76 +1142,33 @@ def translate(words):
 
 
 def main():
+    args = parse_args()
+    base_dir = Path(args.base_dir).resolve()
+    if not base_dir.exists():
+        raise FileNotFoundError(f"Base directory not found: {base_dir}")
+
+    selected_folders = []
+    if args.folders:
+        selected_folders.extend(args.folders)
+    if args.folder:
+        selected_folders.extend(args.folder)
+    if not selected_folders and INPUT_FOLDERS:
+        selected_folders.extend(INPUT_FOLDERS)
+
+    folders = resolve_folders(base_dir, selected_folders or None)
+    if not folders:
+        raise RuntimeError("No folders found to process.")
+
     ensure_nltk()
 
-    files = list(INPUT_DIR.glob("*.html")) + list(INPUT_DIR.glob("*.json"))
-    rows = []
+    if ENABLE_SEARCH_RANK_FILTER:
+        print(f"搜索排名过滤: 启用，仅统计 searchRank < {SEARCH_RANK_LIMIT} 的 keyword")
+    else:
+        print("搜索排名过滤: 关闭，统计全部 keyword")
 
-    for file_path in files:
-        try:
-            data = json.loads(file_path.read_text(encoding="utf-8"))
-            if data.get("code") != "OK":
-                continue
-            items = data["data"]["items"]
-        except Exception:
-            continue
-
-        for item in items:
-            rows.append(
-                {
-                    "keyword": item.get("keyword", ""),
-                    "searches": safe_float(item.get("searches"), 0.0),
-                }
-            )
-
-    df = pd.DataFrame(rows)
-    print("keyword数:", len(df))
-
-    freq = Counter()
-    searches = defaultdict(float)
-    coverage = defaultdict(int)
-
-    for _, row in df.iterrows():
-        words = split_words(row["keyword"])
-        freq.update(words)
-
-        for word in set(words):
-            searches[word] += row["searches"]
-            coverage[word] += 1
-
-    total_freq = sum(freq.values())
-    total_kw = len(df)
-    words = [word for word, _ in freq.most_common()]
-
-    pos_zh = {}
-
-    for word in words:
-        tag, zh = get_pos(word)
-        pos_zh[word] = zh
-
-    zh_map = translate(words)
-    tag_reason = classify_tag_reason(words, zh_map)
-
-    result_rows = []
-
-    for word in words:
-        frequency = freq[word]
-
-        result_rows.append(
-            {
-                "word": word,
-                "word_zh": zh_map.get(word, ""),
-                "pos": pos_zh[word],
-                "标签": tag_reason.get(word, {}).get("标签", "解析失败"),
-                "原因": tag_reason.get(word, {}).get("原因", build_parse_failed_entry(word, zh_map).get("原因")),
-                "freq": frequency,
-                "freq_ratio": round(frequency / total_freq, 6),
-                "freq_ratio_percent": f"{frequency / total_freq:.2%}",
-                "coverage": coverage[word],
-                "coverage_percent": f"{coverage[word] / total_kw:.2%}",
-                "total_searches": round(searches[word], 2),
-            }
-        )
+    print("处理文件夹顺序:")
+    for index, folder in enumerate(folders, start=1):
+        print(f"{index}. {folder}")
 
     output_columns = [
         "word",
@@ -1114,13 +1183,86 @@ def main():
         "coverage_percent",
         "total_searches",
     ]
-    output_df = pd.DataFrame(result_rows, columns=output_columns)
-    if not output_df.empty:
-        output_df = output_df.sort_values(by=["freq", "total_searches"], ascending=[False, False])
-    output_df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
 
-    print("完成:", OUTPUT_FILE)
-    print(output_df.head(20))
+    for folder in folders:
+        print(f"===== 开始处理: {folder.name} =====")
+        files = list(folder.glob("*.html")) + list(folder.glob("*.json"))
+        rows = []
+
+        for file_path in files:
+            try:
+                data = json.loads(file_path.read_text(encoding="utf-8"))
+                if data.get("code") != "OK":
+                    continue
+                items = data["data"]["items"]
+            except Exception:
+                continue
+
+            for item in items:
+                if not should_keep_keyword_item(item):
+                    continue
+                rows.append(
+                    {
+                        "keyword": item.get("keyword", ""),
+                        "searches": safe_float(item.get("searches"), 0.0),
+                    }
+                )
+
+        df = pd.DataFrame(rows)
+        print(f"[{folder.name}] keyword数:", len(df))
+
+        freq = Counter()
+        searches = defaultdict(float)
+        coverage = defaultdict(int)
+
+        for _, row in df.iterrows():
+            words = split_words(row["keyword"])
+            freq.update(words)
+
+            for word in set(words):
+                searches[word] += row["searches"]
+                coverage[word] += 1
+
+        total_freq = sum(freq.values())
+        total_kw = len(df)
+        words = [word for word, _ in freq.most_common()]
+
+        pos_zh = {}
+        for word in words:
+            tag, zh = get_pos(word)
+            pos_zh[word] = zh
+
+        zh_map = translate(words)
+        tag_reason = classify_tag_reason(words, zh_map)
+
+        result_rows = []
+        for word in words:
+            frequency = freq[word]
+            result_rows.append(
+                {
+                    "word": word,
+                    "word_zh": zh_map.get(word, ""),
+                    "pos": pos_zh[word],
+                    "标签": tag_reason.get(word, {}).get("标签", "解析失败"),
+                    "原因": tag_reason.get(word, {}).get("原因", build_parse_failed_entry(word, zh_map).get("原因")),
+                    "freq": frequency,
+                    "freq_ratio": round(frequency / total_freq, 6) if total_freq else 0,
+                    "freq_ratio_percent": f"{frequency / total_freq:.2%}" if total_freq else "0.00%",
+                    "coverage": coverage[word],
+                    "coverage_percent": f"{coverage[word] / total_kw:.2%}" if total_kw else "0.00%",
+                    "total_searches": round(searches[word], 2),
+                }
+            )
+
+        output_df = pd.DataFrame(result_rows, columns=output_columns)
+        if not output_df.empty:
+            output_df = output_df.sort_values(by=["freq", "total_searches"], ascending=[False, False])
+
+        output_file = build_output_file(folder)
+        output_df.to_csv(output_file, index=False, encoding="utf-8-sig")
+
+        print(f"[{folder.name}] 完成:", output_file)
+        print(output_df.head(20))
 
 
 if __name__ == "__main__":

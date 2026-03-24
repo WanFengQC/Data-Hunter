@@ -39,7 +39,7 @@ export async function fetchWordFrequencyTrend(word: string): Promise<WordFrequen
 }
 
 export async function fetchPgGrowthTop10(params: {
-  mode: "monthly" | "quarterly";
+  mode: "monthly" | "quarterly" | "searches";
   year?: number;
   month?: number;
   searchMin?: number;
