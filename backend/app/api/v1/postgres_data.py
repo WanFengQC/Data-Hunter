@@ -11,6 +11,7 @@ from app.services.postgres_table import (
     fetch_asin_aba_history,
     fetch_asin_detail,
     fetch_filter_options,
+    fetch_growth_top10_items,
     fetch_items,
     fetch_word_frequency_trend,
     stream_items_csv,
@@ -34,6 +35,10 @@ def _parse_text_filters(raw: str | None) -> dict[str, Any]:
             item: dict[str, Any] = {"op": op}
             if "value" in value and value.get("value") is not None:
                 item["value"] = str(value.get("value"))
+            if "min" in value and value.get("min") is not None:
+                item["min"] = value.get("min")
+            if "max" in value and value.get("max") is not None:
+                item["max"] = value.get("max")
             output[key_str] = item
         elif value is not None:
             output[key_str] = str(value)
@@ -81,6 +86,37 @@ def get_word_frequency_trend(
             cache_table_name=cache_table,
             items_table_name=items_table,
             word=word,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/growth-top10")
+def get_growth_top10(
+    mode: str = Query(default="monthly"),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    search_min: float | None = Query(default=None, ge=0),
+    search_max: float | None = Query(default=None, ge=0),
+    limit: int = Query(default=10, ge=1, le=100),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="seller_sprite_word_frequency"),
+) -> dict:
+    mode_norm = str(mode or "monthly").strip().lower()
+    if mode_norm not in {"monthly", "quarterly"}:
+        raise HTTPException(status_code=400, detail="Invalid growth mode")
+    if search_min is not None and search_max is not None and search_min > search_max:
+        raise HTTPException(status_code=400, detail="search_min cannot be greater than search_max")
+    try:
+        return fetch_growth_top10_items(
+            schema_name=schema,
+            table_name=table,
+            mode=mode_norm,
+            year=year,
+            month=month,
+            search_min=search_min,
+            search_max=search_max,
+            limit=limit,
         )
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -170,7 +206,7 @@ def create_export_job(
     table: str = Query(default=settings.pg_table),
 ) -> dict:
     try:
-        merged_text_filters: dict[str, str] = {}
+        merged_text_filters: dict[str, Any] = {}
         merged_text_filters.update(_parse_text_filters(filters))
         merged_text_filters.update(_parse_text_filters(text_filters))
         parsed_value_filters = _parse_value_filters(value_filters)
@@ -236,7 +272,7 @@ def list_pg_items(
     table: str = Query(default=settings.pg_table),
 ) -> dict:
     try:
-        merged_text_filters: dict[str, str] = {}
+        merged_text_filters: dict[str, Any] = {}
         merged_text_filters.update(_parse_text_filters(filters))
         merged_text_filters.update(_parse_text_filters(text_filters))
 
@@ -274,7 +310,7 @@ def export_pg_csv(
     table: str = Query(default=settings.pg_table),
 ):
     try:
-        merged_text_filters: dict[str, str] = {}
+        merged_text_filters: dict[str, Any] = {}
         merged_text_filters.update(_parse_text_filters(filters))
         merged_text_filters.update(_parse_text_filters(text_filters))
         parsed_value_filters = _parse_value_filters(value_filters)

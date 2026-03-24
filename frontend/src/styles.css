@@ -120,28 +120,6 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.2rem;
-  border: 1px solid #d8e4f8;
-  border-radius: 10px;
-  background: #f4f8ff;
-}
-
-.table-type-switch .secondary-btn {
-  margin: 0;
-  border: 1px solid transparent;
-  height: 34px;
-  padding: 0 0.8rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.table-type-switch .secondary-btn.active {
-  color: #fff;
-  border-color: #2f63da;
-  background: linear-gradient(135deg, #3d6ee0, #2457cd);
-  box-shadow: 0 4px 10px rgba(36, 87, 205, 0.25);
 }
 
 .table-filters label {
