@@ -2433,6 +2433,7 @@ onBeforeUnmount(() => {
 .keyword-top10-wrap {
   margin-top: 10px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .growth-top10-table-wrap {
@@ -2479,6 +2480,7 @@ onBeforeUnmount(() => {
   color: #b4232c;
   font-size: 13px;
 }
+
 
 .data-table td:not(.top3-cell) {
   vertical-align: middle !important;
