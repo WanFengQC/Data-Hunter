@@ -38,6 +38,30 @@ export async function fetchWordFrequencyTrend(word: string): Promise<WordFrequen
   return data;
 }
 
+export async function fetchPgGrowthTop10(params: {
+  mode: "monthly" | "quarterly";
+  year?: number;
+  month?: number;
+  searchMin?: number;
+  searchMax?: number;
+  table?: string;
+  limit?: number;
+}): Promise<PgItemsResponse> {
+  const payload: Record<string, unknown> = {
+    mode: params.mode,
+    year: params.year,
+    month: params.month,
+    search_min: params.searchMin,
+    search_max: params.searchMax,
+    table: params.table,
+    limit: params.limit ?? 10,
+  };
+  const { data } = await apiClient.get<PgItemsResponse>("/pg/growth-top10", {
+    params: payload,
+  });
+  return data;
+}
+
 export async function fetchPgItems(params: {
   year?: number;
   month?: number;

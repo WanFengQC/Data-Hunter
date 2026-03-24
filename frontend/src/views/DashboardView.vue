@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="dashboard">
     <section class="dashboard-header">
       <h1>Data Hunter Dashboard</h1>
@@ -46,27 +46,35 @@
       <div v-if="wordTrendResult" class="word-trend-meta">
         <span>单词: {{ wordTrendResult.word }}</span>
         <span>中文: {{ wordTrendResult.info.translation_zh || "-" }}</span>
-        <span>类别: {{ wordTrendResult.info.object_category || "-" }}</span>
-        <span>可毛绒: {{ wordTrendResult.info.plushable || "-" }}</span>
+        <span>标签: {{ wordTrendResult.info.tag_label || wordTrendResult.info.object_category || "-" }}</span>
+        <span>原因: {{ wordTrendResult.info.reason || "-" }}</span>
       </div>
-      <div v-if="compareTrendResults.length" class="compare-word-chips">
-        <button
-          v-for="item in compareTrendResults"
-          :key="`cmp-${item.word}`"
-          class="compare-word-chip"
-          @click="removeCompareTrend(item.word)"
-          title="点击移除该对比词"
-        >
-          {{ item.word }} ×
-        </button>
+      <div v-if="compareTrendResults.length" class="compare-word-meta-inline">
+        <span v-for="item in compareTrendResults" :key="`cmp-meta-${item.word}`" class="compare-word-meta-pill">
+          单词: {{ item.word || "-" }} | 中文: {{ item.info?.translation_zh || "-" }} | 标签:
+          {{ item.info?.tag_label || item.info?.object_category || "-" }} | 原因: {{ item.info?.reason || "-" }}
+        </span>
       </div>
-      <div v-if="compareTrendResults.length" class="word-trend-meta compare-meta">
-        <span>已添加对比词: {{ compareTrendResults.length }} 个</span>
+      <div v-if="compareTrendResults.length" class="compare-summary-row compare-summary-row-bottom">
+        <div class="word-trend-meta compare-meta">
+          <span>已添加对比词: {{ compareTrendResults.length }} 个</span>
+        </div>
+        <div class="compare-word-chips compare-word-chips-bottom">
+          <button
+            v-for="item in compareTrendResults"
+            :key="`cmp-${item.word}`"
+            class="compare-word-chip"
+            @click="removeCompareTrend(item.word)"
+            title="点击移除该对比词"
+          >
+            {{ item.word }} ×
+          </button>
+        </div>
       </div>
       <div v-if="wordTrendError" class="word-trend-error">{{ wordTrendError }}</div>
       <div v-if="compareTrendError" class="word-trend-error compare-error">{{ compareTrendError }}</div>
 
-      <div class="word-trend-chart-wrap">
+      <div v-if="hasKeywordSearchTriggered" class="word-trend-chart-wrap">
         <div v-if="wordTrendLoading" class="word-trend-loading">加载中...</div>
         <WordFrequencyTrendChart
           v-else-if="wordTrendResult && wordTrendResult.points.length"
@@ -80,12 +88,214 @@
       </div>
     </section>
 
+    <section v-if="hasKeywordSearchTriggered" class="keyword-top10-panel">
+      <div class="keyword-top10-header">
+        <h2>关键词 Top10</h2>
+        <div v-if="top10WordTabs.length" class="keyword-top10-tabs">
+          <button
+            v-for="tab in top10WordTabs"
+            :key="`top10-tab-${tab.word}`"
+            class="keyword-top10-tab"
+            :class="{ active: activeTop10Word === tab.word }"
+            @click="activeTop10Word = tab.word"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="!wordTrendResult" class="keyword-top10-empty">查询关键词后显示 Top10 数据</div>
+      <div v-else-if="activeTop10Data?.loading" class="keyword-top10-loading">Top10 加载中...</div>
+      <div v-else-if="activeTop10Data?.error" class="keyword-top10-error">{{ activeTop10Data.error }}</div>
+      <div v-else-if="activeTop10Data && activeTop10Data.items.length" class="keyword-top10-wrap">
+        <table class="data-table keyword-top10-table">
+          <thead>
+            <tr>
+              <th class="serial-col">序号</th>
+              <th v-for="col in activeTop10Columns" :key="`top10-head-${col}`">
+                <span :title="col">{{ columnLabel(col) }}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, idx) in activeTop10Data.items" :key="`top10-row-${activeTop10Word}-${idx}-${cellToText(getCell(row, 'id'))}`">
+              <td class="serial-col">{{ idx + 1 }}</td>
+              <td
+                v-for="col in activeTop10Columns"
+                :key="`top10-${idx}-${col}`"
+                :title="
+                  col === 'top3asindtolist' || col === 'top3brands' || col === 'trends'
+                    ? ''
+                    : cellToText(getCell(row, col))
+                "
+                :class="{
+                  'top3-cell': col === 'top3asindtolist' || col === 'top3brands',
+                  'trend-cell': col === 'trends',
+                }"
+              >
+                <template v-if="col === 'top3asindtolist'">
+                  <div class="top3-asin-cell">
+                    <template v-if="parseTop3Asins(getCell(row, col)).length">
+                      <div
+                        v-for="(asinItem, asinIdx) in parseTop3Asins(getCell(row, col))"
+                        :key="`top10-${idx}-${col}-asin-${asinIdx}`"
+                        class="top3-asin-item"
+                      >
+                        <img
+                          v-if="asinItem.imageUrl"
+                          class="top3-asin-image"
+                          :src="asinItem.imageUrl"
+                          :alt="asinItem.asin || `asin-${asinIdx + 1}`"
+                          loading="lazy"
+                        />
+                        <div v-else class="top3-asin-image empty">-</div>
+                        <a
+                          v-if="asinItem.asin"
+                          class="top3-asin-link"
+                          :href="buildAsinUrl(asinItem.asin)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {{ asinItem.asin }}
+                        </a>
+                        <span v-else class="top3-asin-link empty">-</span>
+                        <div class="top3-asin-metric">
+                          <span>点击</span>
+                          <strong>{{ formatPercent(asinItem.clickRate) }}</strong>
+                        </div>
+                        <div class="top3-asin-metric">
+                          <span>转化</span>
+                          <strong>{{ formatPercent(asinItem.conversionRate) }}</strong>
+                        </div>
+                      </div>
+                    </template>
+                    <span v-else>-</span>
+                  </div>
+                </template>
+                <template v-else-if="col === 'top3brands'">
+                  <div class="top3-brand-cell">
+                    <template v-if="parseTop3Brands(getCell(row, col)).length">
+                      <div
+                        v-for="(brand, brandIdx) in parseTop3Brands(getCell(row, col))"
+                        :key="`top10-${idx}-${col}-brand-${brandIdx}`"
+                        class="top3-brand-item"
+                      >
+                        {{ brand }}
+                      </div>
+                    </template>
+                    <span v-else>-</span>
+                  </div>
+                </template>
+                <template v-else-if="col === 'trends'">
+                  <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
+                </template>
+                <template v-else>
+                  {{ formatCell(getCell(row, col), col) }}
+                </template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="keyword-top10-empty">该词未找到 Top10 数据</div>
+    </section>
+
+    <section class="keyword-top10-panel growth-top10-panel">
+      <div class="keyword-top10-header growth-top10-header">
+        <div class="keyword-top10-tabs">
+          <button
+            class="keyword-top10-tab"
+            :class="{ active: growthTop10Mode === 'monthly' }"
+            @click="switchGrowthTop10Mode('monthly')"
+          >
+            月度增长率TOP10
+          </button>
+          <button
+            class="keyword-top10-tab"
+            :class="{ active: growthTop10Mode === 'quarterly' }"
+            @click="switchGrowthTop10Mode('quarterly')"
+          >
+            季度增长率TOP10
+          </button>
+        </div>
+        <div class="table-filters growth-top10-filters">
+          <label>
+            年份
+            <select v-model.number="growthTop10SelectedYear">
+              <option :value="0">全部</option>
+              <option v-for="y in growthTop10YearOptions" :key="`growth-year-${y}`" :value="y">{{ y }}</option>
+            </select>
+          </label>
+          <label>
+            月份
+            <select v-model.number="growthTop10SelectedMonth">
+              <option :value="0">全部</option>
+              <option v-for="m in growthTop10MonthOptions" :key="`growth-month-${m}`" :value="m">
+                {{ String(m).padStart(2, "0") }}
+              </option>
+            </select>
+          </label>
+          <label>
+            搜索量最小值
+            <input
+              v-model="growthTop10SearchMin"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="min"
+            />
+          </label>
+          <label>
+            搜索量最大值
+            <input
+              v-model="growthTop10SearchMax"
+              type="number"
+              min="0"
+              step="1"
+              placeholder="max"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div v-if="growthTop10Loading" class="keyword-top10-loading">增长率TOP10 加载中...</div>
+      <div v-else-if="growthTop10Error" class="keyword-top10-error">{{ growthTop10Error }}</div>
+      <div v-else-if="growthTop10Rows.length" class="table-wrap growth-top10-table-wrap">
+        <table class="data-table growth-top10-table">
+          <thead>
+            <tr>
+              <th class="serial-col">序号</th>
+              <th v-for="col in growthTop10Columns" :key="`growth-top10-head-${col}`">
+                <span :title="col">{{ columnLabel(col) }}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(row, idx) in growthTop10Rows"
+              :key="`growth-top10-row-${growthTop10Mode}-${idx}-${cellToText(getCell(row, 'id'))}`"
+            >
+              <td class="serial-col">{{ idx + 1 }}</td>
+              <td
+                v-for="col in growthTop10Columns"
+                :key="`growth-top10-${idx}-${col}`"
+                :title="cellToText(getCell(row, col))"
+              >
+                {{ formatCell(getCell(row, col), col) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="keyword-top10-empty">暂无增长率Top10数据</div>
+    </section>
+
     <section class="table-panel" :class="{ 'panel-fullscreen': panelFullscreen }" ref="tablePanelRef">
       <div class="table-panel-header">
-        <div class="table-type-switch">
+        <div class="keyword-top10-tabs table-type-switch">
           <button
             type="button"
-            class="secondary-btn"
+            class="keyword-top10-tab"
             :class="{ active: currentTableMode === 'aba' }"
             @click="switchTable('aba')"
           >
@@ -93,7 +303,7 @@
           </button>
           <button
             type="button"
-            class="secondary-btn"
+            class="keyword-top10-tab"
             :class="{ active: currentTableMode === 'word' }"
             @click="switchTable('word')"
           >
@@ -141,28 +351,11 @@
         </div>
       </div>
 
-      <details class="column-manager">
-        <summary>列管理</summary>
-        <div class="column-actions">
-          <button class="secondary-btn" @click="selectAllColumns">全选</button>
-          <button class="secondary-btn" @click="invertColumns">反选</button>
-          <button class="secondary-btn" @click="resetColumns">重置</button>
-        </div>
-        <div class="column-list">
-          <div class="column-item" v-for="col in manageableColumns" :key="col">
-            <label>
-              <input type="checkbox" :checked="isColumnVisible(col)" @change="toggleColumn(col, $event)" />
-              <span :title="col">{{ columnLabel(col) }}</span>
-            </label>
-          </div>
-        </div>
-      </details>
-
       <div class="table-meta">
         <span>总数: {{ tableTotal }}</span>
         <span>已加载页: {{ tablePage }}</span>
         <span v-if="sortBy">排序: {{ columnLabel(sortBy) }} {{ sortDir === "asc" ? "升序" : "降序" }}</span>
-        <span>表头长按后可左右拖动换列</span>
+        <span>可按列头筛选</span>
       </div>
 
       <div
@@ -237,6 +430,17 @@
                         loading="lazy"
                         />
                         <div v-else class="top3-asin-image empty">-</div>
+                        <a
+                          v-if="asinItem.asin"
+                          class="top3-asin-link"
+                          :href="buildAsinUrl(asinItem.asin)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          @click.stop
+                        >
+                          {{ asinItem.asin }}
+                        </a>
+                        <span v-else class="top3-asin-link empty">-</span>
                         <div class="top3-asin-metric">
                           <span>点击</span>
                           <strong>{{ formatPercent(asinItem.clickRate) }}</strong>
@@ -268,7 +472,7 @@
                   <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
                 </template>
                 <template v-else>
-                  {{ formatCell(getCell(row, col)) }}
+                  {{ formatCell(getCell(row, col), col) }}
                 </template>
               </td>
             </tr>
@@ -391,6 +595,7 @@ import {
   downloadPgExportJob,
   fetchPgExportJob,
   fetchPgFilterOptions,
+  fetchPgGrowthTop10,
   fetchPgItems,
   fetchPgYearMonthsByTable,
   fetchWordFrequencyTrend,
@@ -400,7 +605,6 @@ import TrendDataModal from "@/components/TrendDataModal.vue";
 import WordFrequencyTrendChart from "@/components/WordFrequencyTrendChart.vue";
 import type { PgFilterOption, PgTrendPoint, WordFrequencyTrendResponse } from "@/types/data";
 
-const COLUMN_PREFS_KEY_PREFIX = "data_hunter.pg.column_prefs.v2";
 const LONG_PRESS_MS = 220;
 type DataTableMode = "aba" | "word";
 const DATA_TABLES: Record<DataTableMode, { title: string; tableName: string; keywordCol: string; defaultSortField: string }> =
@@ -413,6 +617,26 @@ const DATA_TABLES: Record<DataTableMode, { title: string; tableName: string; key
       defaultSortField: "total_searches",
     },
   };
+const ABA_FIXED_COLUMNS = [
+  "keyword",
+  "keywordcn",
+  "searchrank",
+  "searches",
+  "w4rankgrowthrate",
+  "top3brands",
+  "top3asindtolist",
+  "trends",
+];
+const TOP10_VISIBLE_COLUMNS = [...ABA_FIXED_COLUMNS];
+const GROWTH_TOP10_VISIBLE_COLUMNS = [
+  "word",
+  "word_zh",
+  "freq",
+  "total_searches",
+  "total_searches_growth_rate",
+  "total_searches_quarter_avg_growth_rate",
+];
+type GrowthTop10Mode = "monthly" | "quarterly";
 type TextFilterOp =
   | "contains"
   | "contains_word"
@@ -421,6 +645,8 @@ type TextFilterOp =
   | "ends_with"
   | "equals"
   | "not_equals"
+  | "greater_than"
+  | "less_than"
   | "is_blank"
   | "is_not_blank";
 type TextFilterRule = { op: TextFilterOp; value?: string };
@@ -433,8 +659,10 @@ const textFilterOpOptions: Array<{ value: TextFilterOp; label: string }> = [
   { value: "ends_with", label: "结尾是" },
   { value: "equals", label: "等于" },
   { value: "not_equals", label: "不等于" },
-  { value: "is_blank", label: "为空白" },
-  { value: "is_not_blank", label: "非空白" },
+  { value: "greater_than", label: "大于" },
+  { value: "less_than", label: "小于" },
+  { value: "is_blank", label: "为空" },
+  { value: "is_not_blank", label: "非空" },
 ];
 
 const BASE_EXCLUDED_COLUMNS = new Set([
@@ -447,7 +675,14 @@ const BASE_EXCLUDED_COLUMNS = new Set([
   "station",
   "keywordjp",
 ]);
-const WORD_TABLE_FORCE_HIDDEN_COLUMNS = new Set(["year", "month", "updated_at"]);
+const WORD_TABLE_FORCE_HIDDEN_COLUMNS = new Set([
+  "year",
+  "month",
+  "updated_at",
+  "freq_ratio",
+  "coverage",
+  "coverage_percent",
+]);
 
 const FIELD_LABELS: Record<string, string> = {
   id: "编号",
@@ -484,14 +719,14 @@ const FIELD_LABELS: Record<string, string> = {
   bid: "建议竞价",
   bidmax: "最高竞价",
   bidmin: "最低竞价",
-  minphraseppc: "词组最小PPC",
-  maxphraseppc: "词组最大PPC",
+  minphraseppc: "词组最低PPC",
+  maxphraseppc: "词组最高PPC",
   phraseppc: "词组PPC",
-  minbroadppc: "广泛最小PPC",
-  maxbroadppc: "广泛最大PPC",
+  minbroadppc: "广泛最低PPC",
+  maxbroadppc: "广泛最高PPC",
   broadppc: "广泛PPC",
-  minexactppc: "精确最小PPC",
-  maxexactppc: "精确最大PPC",
+  minexactppc: "精确最低PPC",
+  maxexactppc: "精确最高PPC",
   exactppc: "精确PPC",
   top3asindtolist: "点击前三ASIN",
   trends: "趋势数据",
@@ -500,12 +735,16 @@ const FIELD_LABELS: Record<string, string> = {
   pos: "词性",
   category: "类别",
   plushable: "可毛绒",
+  标签: "标签",
+  原因: "原因",
   freq: "词频",
   freq_ratio: "词频占比",
   freq_ratio_percent: "词频占比(%)",
   coverage: "覆盖数",
   coverage_percent: "覆盖率(%)",
   total_searches: "总搜索量",
+  total_searches_growth_rate: "月度增长率",
+  total_searches_quarter_avg_growth_rate: "季度增长率",
   year: "年份",
   month: "月份",
   updated_at: "更新时间",
@@ -528,6 +767,7 @@ const wordSearchInput = ref("");
 const wordTrendLoading = ref(false);
 const wordTrendError = ref("");
 const wordTrendResult = ref<WordFrequencyTrendResponse | null>(null);
+const hasKeywordSearchTriggered = ref(false);
 const compareWordInput = ref("");
 const compareTrendLoading = ref(false);
 const compareTrendError = ref("");
@@ -535,6 +775,26 @@ const compareTrendResults = ref<WordFrequencyTrendResponse[]>([]);
 const trendModalOpen = ref(false);
 const trendModalTitle = ref("");
 const trendModalPoints = ref<PgTrendPoint[]>([]);
+type KeywordTop10State = {
+  keyword: string;
+  yearMonth: number | null;
+  loading: boolean;
+  error: string;
+  columns: string[];
+  items: Record<string, unknown>[];
+};
+const keywordTop10Map = ref<Record<string, KeywordTop10State>>({});
+const activeTop10Word = ref("");
+const growthTop10Mode = ref<GrowthTop10Mode>("monthly");
+const growthTop10Loading = ref(false);
+const growthTop10Error = ref("");
+const growthTop10ColumnsRaw = ref<string[]>([]);
+const growthTop10Rows = ref<Record<string, unknown>[]>([]);
+const growthTop10YearMonths = ref<number[]>([]);
+const growthTop10SelectedYear = ref(0);
+const growthTop10SelectedMonth = ref(0);
+const growthTop10SearchMin = ref<string | number>("");
+const growthTop10SearchMax = ref<string | number>("");
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -544,7 +804,7 @@ const sortBy = ref<string>("id");
 const sortDir = ref<"asc" | "desc">("asc");
 const textFilters = ref<Record<string, TextFilterValue>>({});
 const valueFilters = ref<Record<string, string[]>>({});
-const visibleColumns = ref<string[]>([]);
+const orderedColumns = ref<string[]>([]);
 
 const tablePanelRef = ref<HTMLElement | null>(null);
 const tableWrapRef = ref<HTMLElement | null>(null);
@@ -576,9 +836,11 @@ const workingFilterValues = ref<string[]>([]);
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
+let growthTop10FilterTimer: ReturnType<typeof setTimeout> | null = null;
 let activeTableRequestSeq = 0;
 let scrollCheckRaf = 0;
 let activeFilterRequestSeq = 0;
+let activeGrowthTop10RequestSeq = 0;
 
 const yearOptions = computed(() => {
   const years = new Set<number>();
@@ -592,6 +854,22 @@ const monthOptions = computed(() => {
     const year = Math.floor(ym / 100);
     const month = ym % 100;
     if (selectedYear.value === 0 || selectedYear.value === year) months.add(month);
+  }
+  return Array.from(months).sort((a, b) => a - b);
+});
+
+const growthTop10YearOptions = computed(() => {
+  const years = new Set<number>();
+  for (const ym of growthTop10YearMonths.value) years.add(Math.floor(ym / 100));
+  return Array.from(years).sort((a, b) => b - a);
+});
+
+const growthTop10MonthOptions = computed(() => {
+  const months = new Set<number>();
+  for (const ym of growthTop10YearMonths.value) {
+    const year = Math.floor(ym / 100);
+    const month = ym % 100;
+    if (growthTop10SelectedYear.value === 0 || growthTop10SelectedYear.value === year) months.add(month);
   }
   return Array.from(months).sort((a, b) => a - b);
 });
@@ -616,26 +894,28 @@ const sortFieldOptions = computed(() => {
   return cols;
 });
 
+const baseDisplayColumns = computed(() => {
+  if (currentTableMode.value === "aba") {
+    const availableSet = new Set(availableColumns.value);
+    return ABA_FIXED_COLUMNS.filter((c) => availableSet.has(c));
+  }
+  return availableColumns.value;
+});
+
 const displayColumns = computed(() => {
-  if (!visibleColumns.value.length) return availableColumns.value;
-  const availableSet = new Set(availableColumns.value);
-  return visibleColumns.value.filter((c) => availableSet.has(c));
-});
-
-const manageableColumns = computed(() => {
-  const available = availableColumns.value;
-  const selectedSet = new Set(visibleColumns.value);
-  const selected = visibleColumns.value.filter((c) => selectedSet.has(c) && available.includes(c));
-  const hidden = available.filter((c) => !selectedSet.has(c));
-  return [...selected, ...hidden];
-});
-
-const dragPreviewValues = computed(() => {
-  if (!draggingCol.value) return [];
-  return tableRows.value.slice(0, 8).map((row) => formatCell(getCell(row, draggingCol.value)));
+  const base = baseDisplayColumns.value;
+  if (!orderedColumns.value.length) return base;
+  const baseSet = new Set(base);
+  const ordered = orderedColumns.value.filter((c) => baseSet.has(c));
+  const missing = base.filter((c) => !ordered.includes(c));
+  return [...ordered, ...missing];
 });
 
 const workingFilterSet = computed(() => new Set(workingFilterValues.value));
+const dragPreviewValues = computed(() => {
+  if (!draggingCol.value) return [];
+  return tableRows.value.slice(0, 8).map((row) => formatCell(getCell(row, draggingCol.value), draggingCol.value));
+});
 
 const visibleFilterOptions = computed(() => filterOptions.value);
 const hasMoreRows = computed(() => tableRows.value.length < tableTotal.value);
@@ -645,6 +925,42 @@ const compareSeriesForChart = computed(() =>
     points: item.points || [],
   }))
 );
+const top10WordTabs = computed(() => {
+  const words: string[] = [];
+  const mainWord = String(wordTrendResult.value?.word || "").trim().toLowerCase();
+  if (mainWord) words.push(mainWord);
+  for (const item of compareTrendResults.value) {
+    const w = String(item.word || "").trim().toLowerCase();
+    if (w && !words.includes(w)) words.push(w);
+  }
+  return words.map((word) => ({
+    word,
+    label: word === mainWord ? `${word}（主词）` : word,
+  }));
+});
+const activeTop10Data = computed(() => {
+  const key = String(activeTop10Word.value || "").trim().toLowerCase();
+  if (!key) return null;
+  return keywordTop10Map.value[key] || null;
+});
+const activeTop10Columns = computed(() => {
+  const data = activeTop10Data.value;
+  if (!data) return [] as string[];
+  const available = Array.isArray(data.columns) && data.columns.length
+    ? data.columns
+    : data.items.length
+      ? Object.keys(data.items[0])
+      : [];
+  const availableSet = new Set(available);
+  return TOP10_VISIBLE_COLUMNS.filter((col) => availableSet.has(col));
+});
+const growthTop10SortField = computed(() =>
+  growthTop10Mode.value === "monthly" ? "total_searches_growth_rate" : "total_searches_quarter_avg_growth_rate"
+);
+const growthTop10Columns = computed(() => {
+  const availableSet = new Set(growthTop10ColumnsRaw.value);
+  return GROWTH_TOP10_VISIBLE_COLUMNS.filter((col) => availableSet.has(col));
+});
 const filterRuleNeedsValue = computed(
   () => filterTextRule.value.op !== "is_blank" && filterTextRule.value.op !== "is_not_blank"
 );
@@ -653,35 +969,16 @@ function columnLabel(col: string): string {
   return FIELD_LABELS[col] || col;
 }
 
-function getColumnPrefsKey(): string {
-  return `${COLUMN_PREFS_KEY_PREFIX}.${currentTableMode.value}`;
-}
-
-function loadColumnPrefs(): void {
-  try {
-    const raw = localStorage.getItem(getColumnPrefsKey());
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return;
-    visibleColumns.value = parsed.filter((v): v is string => typeof v === "string");
-  } catch {
-    // ignore broken cache
-  }
-}
-
-function saveColumnPrefs(): void {
-  localStorage.setItem(getColumnPrefsKey(), JSON.stringify(visibleColumns.value));
-}
-
-function syncColumnsState(): void {
-  const available = availableColumns.value;
-  if (!visibleColumns.value.length) {
-    visibleColumns.value = [...available];
+function syncOrderedColumnsState(): void {
+  const base = baseDisplayColumns.value;
+  if (!orderedColumns.value.length) {
+    orderedColumns.value = [...base];
     return;
   }
-  const availableSet = new Set(available);
-  const next = visibleColumns.value.filter((c) => availableSet.has(c));
-  visibleColumns.value = next.length ? next : [...available];
+  const baseSet = new Set(base);
+  const ordered = orderedColumns.value.filter((c) => baseSet.has(c));
+  const missing = base.filter((c) => !ordered.includes(c));
+  orderedColumns.value = [...ordered, ...missing];
 }
 
 function isColumnValueFiltered(col: string): boolean {
@@ -701,9 +998,7 @@ function moveColumnToInsertIndex(col: string, insertIndex: number): void {
   let target = Math.max(0, Math.min(insertIndex, current.length));
   if (target > from) target -= 1;
   current.splice(target, 0, col);
-
-  visibleColumns.value = [...current];
-  saveColumnPrefs();
+  orderedColumns.value = current;
 }
 
 function getHeaderMetrics(): Array<{ left: number; right: number; center: number }> {
@@ -818,6 +1113,31 @@ async function initYearMonthFilters(): Promise<void> {
   selectedMonth.value = latest % 100;
 }
 
+async function initGrowthTop10Filters(): Promise<void> {
+  growthTop10YearMonths.value = await fetchPgYearMonthsByTable(DATA_TABLES.word.tableName);
+  if (!growthTop10YearMonths.value.length) {
+    growthTop10SelectedYear.value = 0;
+    growthTop10SelectedMonth.value = 0;
+    return;
+  }
+  const latest = growthTop10YearMonths.value[0];
+  growthTop10SelectedYear.value = Math.floor(latest / 100);
+  growthTop10SelectedMonth.value = latest % 100;
+}
+
+function resetGrowthTop10FilterValues(): void {
+  growthTop10SearchMin.value = "";
+  growthTop10SearchMax.value = "";
+  const latest = growthTop10YearMonths.value[0];
+  if (!latest) {
+    growthTop10SelectedYear.value = 0;
+    growthTop10SelectedMonth.value = 0;
+    return;
+  }
+  growthTop10SelectedYear.value = Math.floor(latest / 100);
+  growthTop10SelectedMonth.value = latest % 100;
+}
+
 type Top3AsinItem = {
   asin: string;
   imageUrl: string;
@@ -895,6 +1215,164 @@ function parseTop3Asins(value: unknown): Top3AsinItem[] {
   }));
 }
 
+function normalizeWordKey(word: string): string {
+  return String(word || "").trim().toLowerCase();
+}
+
+function parseYearMonth(ym: number | null | undefined): { year?: number; month?: number } {
+  const n = Number(ym);
+  if (!Number.isFinite(n) || n <= 0) return {};
+  const year = Math.floor(n / 100);
+  const month = n % 100;
+  if (year < 2000 || month < 1 || month > 12) return {};
+  return { year, month };
+}
+
+async function loadGrowthTop10(): Promise<void> {
+  const requestSeq = ++activeGrowthTop10RequestSeq;
+  growthTop10Loading.value = true;
+  growthTop10Error.value = "";
+  growthTop10Rows.value = [];
+  growthTop10ColumnsRaw.value = [];
+  const minText = String(growthTop10SearchMin.value ?? "").trim();
+  const maxText = String(growthTop10SearchMax.value ?? "").trim();
+  const hasMin = minText.length > 0;
+  const hasMax = maxText.length > 0;
+  let minValue: number | null = null;
+  let maxValue: number | null = null;
+
+  if (hasMin) {
+    minValue = Number(minText);
+    if (!Number.isFinite(minValue)) {
+      growthTop10Error.value = "搜索量最小值必须是数字";
+      growthTop10Loading.value = false;
+      return;
+    }
+  }
+  if (hasMax) {
+    maxValue = Number(maxText);
+    if (!Number.isFinite(maxValue)) {
+      growthTop10Error.value = "搜索量最大值必须是数字";
+      growthTop10Loading.value = false;
+      return;
+    }
+  }
+  if (minValue !== null && maxValue !== null && minValue > maxValue) {
+    growthTop10Error.value = "搜索量最小值不能大于最大值";
+    growthTop10Loading.value = false;
+    return;
+  }
+
+  try {
+    const data = await fetchPgGrowthTop10({
+      mode: growthTop10Mode.value,
+      table: DATA_TABLES.word.tableName,
+      limit: 10,
+      year: growthTop10SelectedYear.value || undefined,
+      month: growthTop10SelectedMonth.value || undefined,
+      searchMin: minValue ?? undefined,
+      searchMax: maxValue ?? undefined,
+    });
+    if (requestSeq !== activeGrowthTop10RequestSeq) return;
+    growthTop10ColumnsRaw.value = data.columns || [];
+    growthTop10Rows.value = data.items || [];
+  } catch (error) {
+    if (requestSeq !== activeGrowthTop10RequestSeq) return;
+    console.error("loadGrowthTop10 failed:", error);
+    growthTop10Error.value = "增长率TOP10查询失败，请稍后重试";
+    growthTop10ColumnsRaw.value = [];
+    growthTop10Rows.value = [];
+  } finally {
+    if (requestSeq === activeGrowthTop10RequestSeq) {
+      growthTop10Loading.value = false;
+    }
+  }
+}
+
+function scheduleGrowthTop10Reload(delay = 180): void {
+  if (!autoReloadReady.value) return;
+  if (growthTop10FilterTimer) clearTimeout(growthTop10FilterTimer);
+  growthTop10FilterTimer = setTimeout(() => {
+    growthTop10FilterTimer = null;
+    void loadGrowthTop10();
+  }, delay);
+}
+
+async function switchGrowthTop10Mode(mode: GrowthTop10Mode): Promise<void> {
+  if (growthTop10Mode.value === mode) return;
+  growthTop10Mode.value = mode;
+  await loadGrowthTop10();
+}
+
+async function fetchKeywordTop10(word: string, latestYearMonth?: number | null): Promise<void> {
+  const key = normalizeWordKey(word);
+  if (!key) return;
+
+  const prev = keywordTop10Map.value[key];
+  keywordTop10Map.value = {
+    ...keywordTop10Map.value,
+    [key]: {
+      keyword: key,
+      yearMonth: latestYearMonth ?? prev?.yearMonth ?? null,
+      loading: true,
+      error: "",
+      columns: prev?.columns ?? [],
+      items: prev?.items ?? [],
+    },
+  };
+
+  try {
+    const { year, month } = parseYearMonth(latestYearMonth ?? null);
+    const data = await fetchPgItems({
+      table: DATA_TABLES.aba.tableName,
+      page: 1,
+      pageSize: 10,
+      year,
+      month,
+      sortBy: "searches",
+      sortDir: "desc",
+      textFilters: {
+        [DATA_TABLES.aba.keywordCol]: {
+          op: "contains_word",
+          value: key,
+        },
+      },
+      valueFilters: {},
+    });
+    const items: Record<string, unknown>[] = (data.items || []).slice(0, 10);
+    keywordTop10Map.value = {
+      ...keywordTop10Map.value,
+      [key]: {
+        keyword: key,
+        yearMonth: latestYearMonth ?? null,
+        loading: false,
+        error: "",
+        columns: data.columns || [],
+        items,
+      },
+    };
+  } catch (error) {
+    console.error("fetchKeywordTop10 failed:", error);
+    keywordTop10Map.value = {
+      ...keywordTop10Map.value,
+      [key]: {
+        keyword: key,
+        yearMonth: latestYearMonth ?? null,
+        loading: false,
+        error: "Top10 查询失败，请稍后重试",
+        columns: [],
+        items: [],
+      },
+    };
+  }
+}
+
+function buildAsinUrl(asinRaw: string): string {
+  const asin = String(asinRaw || "").trim();
+  if (!asin) return "https://www.amazon.com";
+  return `https://www.amazon.com/dp/${encodeURIComponent(asin)}`;
+}
+
 function parseTop3Brands(value: unknown): string[] {
   const normalizeBrand = (raw: string): string => {
     const text = raw.trim();
@@ -945,6 +1423,17 @@ function formatPercent(value: number | null): string {
   return `${normalized.toFixed(2)}%`;
 }
 
+function formatInteger(value: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function toNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
 function getCell(row: Record<string, unknown>, key: string): unknown {
   return row[key];
 }
@@ -955,7 +1444,14 @@ function cellToText(value: unknown): string {
   return String(value);
 }
 
-function formatCell(value: unknown): string {
+function formatCell(value: unknown, col?: string): string {
+  if (
+    col === "w4rankgrowthrate" ||
+    col === "total_searches_growth_rate" ||
+    col === "total_searches_quarter_avg_growth_rate"
+  ) {
+    return formatPercent(toNumber(value));
+  }
   const text = cellToText(value);
   return text.length > 80 ? `${text.slice(0, 80)}...` : text;
 }
@@ -1038,7 +1534,7 @@ async function loadTable(options: { append?: boolean } = {}): Promise<void> {
     } else {
       tableRows.value = data.items;
     }
-    syncColumnsState();
+    syncOrderedColumnsState();
   } finally {
     if (append) tableLoadingMore.value = false;
     else tableLoading.value = false;
@@ -1071,54 +1567,15 @@ async function switchTable(mode: DataTableMode): Promise<void> {
   tableRows.value = [];
   tableTotal.value = 0;
   tablePage.value = 1;
-  visibleColumns.value = [];
+  orderedColumns.value = [];
   sortBy.value = "id";
   sortDir.value = "asc";
   try {
-    loadColumnPrefs();
     await initYearMonthFilters();
     await loadTable();
   } finally {
     suspendAutoReload.value = false;
   }
-}
-
-function isColumnVisible(col: string): boolean {
-  return visibleColumns.value.includes(col);
-}
-
-function toggleColumn(col: string, event: Event): void {
-  const target = event.target as HTMLInputElement;
-  if (target.checked) {
-    if (!visibleColumns.value.includes(col)) visibleColumns.value = [...visibleColumns.value, col];
-  } else {
-    if (visibleColumns.value.length <= 1) return;
-    visibleColumns.value = visibleColumns.value.filter((c) => c !== col);
-  }
-  saveColumnPrefs();
-}
-
-function selectAllColumns(): void {
-  visibleColumns.value = [...availableColumns.value];
-  saveColumnPrefs();
-}
-
-function invertColumns(): void {
-  const available = availableColumns.value;
-  const selected = new Set(visibleColumns.value);
-  const inverted = available.filter((col) => !selected.has(col));
-  visibleColumns.value = inverted.length ? inverted : available.slice(0, 1);
-  saveColumnPrefs();
-}
-
-function resetColumns(): void {
-  visibleColumns.value = [...availableColumns.value];
-  sortBy.value = "id";
-  sortDir.value = "asc";
-  textFilters.value = {};
-  valueFilters.value = {};
-  saveColumnPrefs();
-  void reloadTable();
 }
 
 async function openFilterMenu(col: string, event: MouseEvent): Promise<void> {
@@ -1399,41 +1856,26 @@ function onFullscreenChange(): void {
 async function searchWordTrend(): Promise<void> {
   const word = wordSearchInput.value.trim().toLowerCase();
   if (!word) return;
+  hasKeywordSearchTriggered.value = true;
   wordTrendLoading.value = true;
   wordTrendError.value = "";
   compareTrendError.value = "";
   compareTrendResults.value = [];
   compareWordInput.value = "";
+  keywordTop10Map.value = {};
+  activeTop10Word.value = "";
   try {
     const data = await fetchWordFrequencyTrend(word);
     wordTrendResult.value = data;
-    if (currentTableMode.value !== "aba") {
-      await switchTable("aba");
+    const mainWord = normalizeWordKey(data.word || word);
+    if (mainWord) {
+      activeTop10Word.value = mainWord;
+      await fetchKeywordTop10(mainWord, data.latest_year_month ?? null);
     }
-
-    const latestYm = Number(data.latest_year_month) || Number(yearMonths.value[0] || 0);
-    suspendAutoReload.value = true;
-    if (latestYm > 0) {
-      selectedYear.value = Math.floor(latestYm / 100);
-      selectedMonth.value = latestYm % 100;
-    }
-    textFilters.value = {
-      [DATA_TABLES.aba.keywordCol]: {
-        op: "contains_word",
-        value: word,
-      },
-    };
-    valueFilters.value = {};
-    sortBy.value = DATA_TABLES.aba.defaultSortField;
-    sortDir.value = "desc";
-    closeFilterMenu();
-    suspendAutoReload.value = false;
-    await reloadTable();
   } catch (error) {
     console.error("searchWordTrend failed:", error);
     wordTrendError.value = "查询失败，请稍后重试";
     wordTrendResult.value = null;
-    suspendAutoReload.value = false;
   } finally {
     wordTrendLoading.value = false;
   }
@@ -1489,6 +1931,9 @@ async function searchCompareTrend(): Promise<void> {
     if (appended.length) {
       compareTrendResults.value = [...compareTrendResults.value, ...appended];
       compareWordInput.value = "";
+      await Promise.allSettled(
+        appended.map((item) => fetchKeywordTop10(item.word, item.latest_year_month ?? null))
+      );
     }
     if (failed.length) {
       compareTrendError.value = `以下词查询失败: ${failed.join(", ")}`;
@@ -1505,10 +1950,28 @@ function clearCompareTrend(): void {
   compareTrendResults.value = [];
   compareTrendError.value = "";
   compareWordInput.value = "";
+  const mainWord = normalizeWordKey(wordTrendResult.value?.word || "");
+  if (mainWord && keywordTop10Map.value[mainWord]) {
+    keywordTop10Map.value = { [mainWord]: keywordTop10Map.value[mainWord] };
+    activeTop10Word.value = mainWord;
+  } else {
+    keywordTop10Map.value = {};
+    activeTop10Word.value = "";
+  }
 }
 
 function removeCompareTrend(word: string): void {
   compareTrendResults.value = compareTrendResults.value.filter((item) => item.word !== word);
+  const key = normalizeWordKey(word);
+  const mainWord = normalizeWordKey(wordTrendResult.value?.word || "");
+  if (key && key !== mainWord) {
+    const next = { ...keywordTop10Map.value };
+    delete next[key];
+    keywordTop10Map.value = next;
+    if (activeTop10Word.value === key) {
+      activeTop10Word.value = mainWord || top10WordTabs.value[0]?.word || "";
+    }
+  }
 }
 
 async function toggleTableFullscreen(): Promise<void> {
@@ -1536,6 +1999,18 @@ watch(selectedYear, () => {
   triggerRealtimeReload();
 });
 
+watch(growthTop10SelectedYear, () => {
+  if (growthTop10SelectedMonth.value !== 0 && !growthTop10MonthOptions.value.includes(growthTop10SelectedMonth.value)) {
+    growthTop10SelectedMonth.value = 0;
+    return;
+  }
+  scheduleGrowthTop10Reload(0);
+});
+
+watch([growthTop10SelectedMonth, growthTop10SearchMin, growthTop10SearchMax], () => {
+  scheduleGrowthTop10Reload();
+});
+
 watch([selectedMonth, sortBy, sortDir], () => {
   triggerRealtimeReload();
 });
@@ -1557,6 +2032,20 @@ watch(sortFieldOptions, (options) => {
 });
 
 watch(
+  top10WordTabs,
+  (tabs) => {
+    if (!tabs.length) {
+      activeTop10Word.value = "";
+      return;
+    }
+    if (!tabs.some((tab) => tab.word === activeTop10Word.value)) {
+      activeTop10Word.value = tabs[0].word;
+    }
+  },
+  { deep: true }
+);
+
+watch(
   () => filterMenu.value.keyword,
   (keyword) => {
     if (!filterMenu.value.open || !filterMenu.value.column) return;
@@ -1568,7 +2057,6 @@ watch(
 );
 
 onMounted(async () => {
-  loadColumnPrefs();
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("fullscreenchange", onFullscreenChange);
   try {
@@ -1577,9 +2065,19 @@ onMounted(async () => {
     console.error("initYearMonthFilters failed:", error);
   }
   try {
+    await initGrowthTop10Filters();
+  } catch (error) {
+    console.error("initGrowthTop10Filters failed:", error);
+  }
+  try {
     await loadTable();
   } catch (error) {
     console.error("loadTable failed:", error);
+  }
+  try {
+    await loadGrowthTop10();
+  } catch (error) {
+    console.error("loadGrowthTop10 failed:", error);
   }
   autoReloadReady.value = true;
   scheduleLazyLoadCheck();
@@ -1588,6 +2086,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (longPressTimer) clearTimeout(longPressTimer);
   if (filterTimer) clearTimeout(filterTimer);
+  if (growthTop10FilterTimer) clearTimeout(growthTop10FilterTimer);
   clearDragState();
   cleanupDragHandlers();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
@@ -1672,19 +2171,58 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+.compare-word-chips-bottom {
+  margin-top: 0;
+  align-items: center;
+}
+
 .compare-word-chip {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid #d7e7fb;
   background: #f4f8ff;
   color: #264782;
   border-radius: 999px;
-  font-size: 12px;
-  padding: 3px 10px;
+  font-size: 13px;
+  padding: 4px 10px;
+  line-height: 1.2;
   cursor: pointer;
 }
 
 .compare-word-chip:hover {
   background: #e9f1ff;
   border-color: #b8cff3;
+}
+
+.compare-summary-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compare-word-meta-inline {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.compare-word-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #d8e5fe;
+  color: #243650;
+  font-size: 13px;
+}
+
+.compare-summary-row .word-trend-meta {
+  margin-top: 0;
 }
 
 .word-trend-meta {
@@ -1745,6 +2283,112 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
+.keyword-top10-panel {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #dbe7fb;
+  background: #f9fbff;
+}
+
+.keyword-top10-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.growth-top10-header {
+  align-items: center;
+}
+
+.growth-top10-filters {
+  margin-top: 0;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.growth-top10-filters select,
+.growth-top10-filters input {
+  width: 100px;
+  min-width: 100px;
+  height: 35px;
+  box-sizing: border-box;
+}
+
+.keyword-top10-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.growth-top10-header .keyword-top10-tabs {
+  flex: 1 1 auto;
+}
+
+.keyword-top10-tab {
+  border: 1px solid #cad8f7;
+  background: #ffffff;
+  color: #27467e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.keyword-top10-tab.active {
+  border-color: #3f6fda;
+  background: #edf4ff;
+  color: #1f3f7a;
+  font-weight: 600;
+}
+
+.keyword-top10-wrap {
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.growth-top10-table-wrap {
+  margin-top: 10px;
+}
+
+.keyword-top10-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.keyword-top10-table th,
+.keyword-top10-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e4ecfb;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 13px;
+}
+
+.keyword-top10-table thead th {
+  background: #eff5ff;
+  color: #1f3f7a;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.keyword-top10-empty,
+.keyword-top10-loading {
+  margin-top: 10px;
+  color: #556480;
+  font-size: 13px;
+}
+
+.keyword-top10-error {
+  margin-top: 10px;
+  color: #b4232c;
+  font-size: 13px;
+}
+
 .data-table td:not(.top3-cell) {
   vertical-align: middle !important;
 }
@@ -1794,6 +2438,21 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.top3-asin-link {
+  max-width: 100%;
+  font-size: 11px;
+  color: #1d4ed8;
+  text-decoration: underline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top3-asin-link.empty {
+  color: #7a8aa8;
+  text-decoration: none;
+}
+
 .top3-asin-metric {
   width: 100%;
   display: flex;
@@ -1826,11 +2485,68 @@ onBeforeUnmount(() => {
   line-height: 1.2;
 }
 
+.sortable-header {
+  cursor: grab;
+  user-select: none;
+}
+
+.sortable-header:active {
+  cursor: grabbing;
+}
+
+.drag-source-col {
+  background: #e8f0ff !important;
+}
+
 .table-wrap {
   position: relative;
   overflow: auto;
   max-height: 62vh;
   transition: filter 0.18s ease, opacity 0.18s ease;
+}
+
+.column-insert-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #315fcd;
+  z-index: 9;
+  pointer-events: none;
+}
+
+.column-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  border: 1px solid #bcd0f7;
+  border-radius: 10px;
+  box-shadow: 0 16px 30px rgba(18, 38, 75, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+  overflow: hidden;
+}
+
+.column-drag-ghost-header {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f3f77;
+  background: #eef4ff;
+  border-bottom: 1px solid #d7e5ff;
+}
+
+.column-drag-ghost-cell {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #2a3d60;
+  border-top: 1px solid #f1f5ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:global(body.col-dragging-mode) {
+  cursor: grabbing;
 }
 
 .table-wrap.is-loading .data-table {

@@ -54,6 +54,8 @@ export interface PgTrendPoint {
 
 export interface WordFrequencyTrendInfo {
   translation_zh?: string | null;
+  tag_label?: string | null;
+  reason?: string | null;
   object_category?: string | null;
   plushable?: string | null;
   plushable_bool?: boolean | null;

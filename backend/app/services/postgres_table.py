@@ -15,6 +15,15 @@ from psycopg.rows import dict_row
 from app.core.config import settings
 
 BLANK_TOKEN = "__BLANK__"
+NUMERIC_COLUMN_TYPES = {
+    "smallint",
+    "integer",
+    "bigint",
+    "decimal",
+    "numeric",
+    "real",
+    "double precision",
+}
 
 
 def pg_connect() -> psycopg.Connection:
@@ -84,14 +93,24 @@ def _build_time_clauses(year: int | None, month: int | None) -> tuple[list[sql.S
 def _build_text_filter_clauses(
     text_filters: dict[str, Any],
     valid_columns: set[str],
+    column_types: dict[str, str] | None = None,
 ) -> tuple[list[sql.SQL], list[Any]]:
     clauses: list[sql.SQL] = []
     params: list[Any] = []
+    normalized_column_types = {key: str(value).lower() for key, value in (column_types or {}).items()}
 
     for key, raw_value in text_filters.items():
         if key not in valid_columns:
             continue
         col_text = sql.SQL("CAST({} AS TEXT)").format(sql.Identifier(key))
+        col_trimmed_text = sql.SQL("trim(CAST({} AS TEXT))").format(sql.Identifier(key))
+        if normalized_column_types.get(key) in NUMERIC_COLUMN_TYPES:
+            col_numeric = sql.SQL("CAST({} AS DOUBLE PRECISION)").format(sql.Identifier(key))
+        else:
+            col_numeric = sql.SQL(
+                "(CASE WHEN {} ~ '^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE][+-]?\\d+)?$' "
+                "THEN CAST({} AS DOUBLE PRECISION) ELSE NULL END)"
+            ).format(col_trimmed_text, col_trimmed_text)
 
         # Backward-compatible: plain string means "contains"
         if isinstance(raw_value, str):
@@ -147,6 +166,45 @@ def _build_text_filter_clauses(
                 sql.SQL("({} IS NULL OR lower({}) <> lower(%s))").format(sql.Identifier(key), col_text)
             )
             params.append(value)
+        elif op == "greater_than":
+            if not value:
+                continue
+            try:
+                num_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            clauses.append(sql.SQL("{} > %s").format(col_numeric))
+            params.append(num_value)
+        elif op == "less_than":
+            if not value:
+                continue
+            try:
+                num_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            clauses.append(sql.SQL("{} < %s").format(col_numeric))
+            params.append(num_value)
+        elif op == "range":
+            raw_min = raw_value.get("min")
+            raw_max = raw_value.get("max")
+            has_min = raw_min not in (None, "")
+            has_max = raw_max not in (None, "")
+            if not has_min and not has_max:
+                continue
+            if has_min:
+                try:
+                    min_value = float(raw_min)
+                except (TypeError, ValueError):
+                    continue
+                clauses.append(sql.SQL("{} >= %s").format(col_numeric))
+                params.append(min_value)
+            if has_max:
+                try:
+                    max_value = float(raw_max)
+                except (TypeError, ValueError):
+                    continue
+                clauses.append(sql.SQL("{} <= %s").format(col_numeric))
+                params.append(max_value)
         elif op == "is_blank":
             clauses.append(sql.SQL("({} IS NULL OR {} = '')").format(sql.Identifier(key), col_text))
         elif op == "is_not_blank":
@@ -197,6 +255,7 @@ def _build_where_sql(
     year: int | None,
     month: int | None,
     valid_columns: set[str],
+    column_types: dict[str, str] | None = None,
     text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
     exclude_value_filter_column: str | None = None,
@@ -208,7 +267,9 @@ def _build_where_sql(
     clauses.extend(t_clauses)
     params.extend(t_params)
 
-    f_clauses, f_params = _build_text_filter_clauses(text_filters or {}, valid_columns)
+    f_clauses, f_params = _build_text_filter_clauses(
+        text_filters or {}, valid_columns, column_types=column_types
+    )
     clauses.extend(f_clauses)
     params.extend(f_params)
 
@@ -294,6 +355,7 @@ def fetch_filter_options(
             return []
 
         column_meta = _get_column_meta(conn, schema_name, table_name)
+        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
         valid_columns = {row["column_name"] for row in column_meta}
         if column not in valid_columns:
             return []
@@ -309,6 +371,7 @@ def fetch_filter_options(
             year=year,
             month=month,
             valid_columns=valid_columns,
+            column_types=column_types,
             text_filters=merged_text_filters,
             value_filters=value_filters,
             exclude_value_filter_column=column,
@@ -385,6 +448,7 @@ def fetch_items(
             year=year,
             month=month,
             valid_columns=valid_columns,
+            column_types=column_types,
             text_filters=merged_text_filters,
             value_filters=value_filters,
         )
@@ -434,6 +498,87 @@ def fetch_items(
     }
 
 
+def fetch_growth_top10_items(
+    schema_name: str,
+    table_name: str,
+    mode: str,
+    year: int | None = None,
+    month: int | None = None,
+    search_min: float | None = None,
+    search_max: float | None = None,
+    limit: int = 10,
+    tag_label: str = "2外形",
+) -> dict[str, Any]:
+    sort_by_map = {
+        "monthly": "total_searches_growth_rate",
+        "quarterly": "total_searches_quarter_avg_growth_rate",
+    }
+    sort_by = sort_by_map.get(str(mode).lower(), "total_searches_growth_rate")
+    limit = max(1, min(int(limit or 10), 100))
+
+    text_filters: dict[str, Any] = {
+        "标签": {"op": "equals", "value": tag_label},
+    }
+    if search_min is not None or search_max is not None:
+        range_filter: dict[str, Any] = {"op": "range"}
+        if search_min is not None:
+            range_filter["min"] = search_min
+        if search_max is not None:
+            range_filter["max"] = search_max
+        text_filters["total_searches"] = range_filter
+
+    with pg_connect() as conn:
+        if not _table_exists(conn, schema_name, table_name):
+            return {"columns": [], "items": [], "total": 0, "page": 1, "page_size": limit}
+
+        column_meta = _get_column_meta(conn, schema_name, table_name)
+        columns = [row["column_name"] for row in column_meta]
+        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
+        valid_columns = set(columns)
+
+        where_sql, where_params = _build_where_sql(
+            year=year,
+            month=month,
+            valid_columns=valid_columns,
+            column_types=column_types,
+            text_filters=text_filters,
+            value_filters={},
+        )
+        order_sql = _build_order_sql(
+            sort_by=sort_by,
+            sort_dir="desc",
+            valid_columns=valid_columns,
+            column_types=column_types,
+        )
+        data_query = (
+            sql.SQL("SELECT * FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + where_sql
+            + order_sql
+            + sql.SQL(" LIMIT %s")
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(data_query, [*where_params, limit])
+            rows = cur.fetchall()
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item: dict[str, Any] = {}
+        for key, value in row.items():
+            item[key] = _serialize_value(value)
+        items.append(item)
+
+    return {
+        "columns": columns,
+        "items": items,
+        "total": len(items),
+        "page": 1,
+        "page_size": limit,
+    }
+
+
 def fetch_all_items(
     schema_name: str,
     table_name: str,
@@ -464,6 +609,7 @@ def fetch_all_items(
             year=year,
             month=month,
             valid_columns=valid_columns,
+            column_types=column_types,
             text_filters=merged_text_filters,
             value_filters=value_filters,
         )
@@ -549,6 +695,7 @@ def stream_items_csv(
             year=year,
             month=month,
             valid_columns=valid_columns,
+            column_types=column_types,
             text_filters=merged_text_filters,
             value_filters=value_filters,
         )
@@ -623,24 +770,60 @@ def fetch_word_frequency_trend(
     with pg_connect() as conn:
         has_freq_table = _table_exists(conn, schema_name, freq_table_name)
         if has_freq_table:
+            freq_columns = {
+                row["column_name"] for row in _get_column_meta(conn, schema_name, freq_table_name)
+            }
+            has_word_zh = "word_zh" in freq_columns
+            has_tag = "标签" in freq_columns
+            has_reason = "原因" in freq_columns
+            has_category = "category" in freq_columns
+            has_plushable = "plushable" in freq_columns
+
+            select_fields: list[sql.SQL] = [
+                sql.SQL("year_month"),
+                sql.SQL("year"),
+                sql.SQL("month"),
+                sql.SQL("freq"),
+                sql.SQL("freq_ratio"),
+                sql.SQL("coverage"),
+                sql.SQL("total_searches"),
+                sql.SQL("word_zh") if has_word_zh else sql.SQL("NULL::text AS word_zh"),
+            ]
+            if has_tag:
+                select_fields.append(sql.SQL("{} AS tag_label").format(sql.Identifier("标签")))
+            elif has_category:
+                select_fields.append(sql.SQL("category AS tag_label"))
+            else:
+                select_fields.append(sql.SQL("NULL::text AS tag_label"))
+
+            if has_reason:
+                select_fields.append(sql.SQL("{} AS tag_reason").format(sql.Identifier("原因")))
+            else:
+                select_fields.append(sql.SQL("NULL::text AS tag_reason"))
+
+            if has_category:
+                select_fields.append(sql.SQL("category"))
+            else:
+                select_fields.append(sql.SQL("NULL::text AS category"))
+
+            if has_plushable:
+                select_fields.append(sql.SQL("plushable"))
+            else:
+                select_fields.append(sql.SQL("NULL::text AS plushable"))
+
             points_query = sql.SQL(
                 """
                 SELECT
-                    year_month,
-                    year,
-                    month,
-                    freq,
-                    freq_ratio,
-                    coverage,
-                    total_searches,
-                    word_zh,
-                    category,
-                    plushable
+                    {}
                 FROM {}.{}
                 WHERE word = %s
                 ORDER BY year_month ASC
                 """
-            ).format(sql.Identifier(schema_name), sql.Identifier(freq_table_name))
+            ).format(
+                sql.SQL(", ").join(select_fields),
+                sql.Identifier(schema_name),
+                sql.Identifier(freq_table_name),
+            )
             with conn.cursor() as cur:
                 cur.execute(points_query, (normalized_word,))
                 rows = cur.fetchall()
@@ -664,29 +847,75 @@ def fetch_word_frequency_trend(
 
                 if rows:
                     latest_row = rows[-1]
+                    tag_label = latest_row.get("tag_label")
                     info = {
                         "translation_zh": latest_row.get("word_zh"),
-                        "object_category": latest_row.get("category"),
+                        "tag_label": tag_label,
+                        "reason": latest_row.get("tag_reason"),
+                        "object_category": latest_row.get("category") or tag_label,
                         "plushable": latest_row.get("plushable"),
                         "plushable_bool": None,
                     }
 
         if _table_exists(conn, schema_name, cache_table_name):
+            cache_columns = {
+                row["column_name"] for row in _get_column_meta(conn, schema_name, cache_table_name)
+            }
+            cache_select: list[sql.SQL] = [
+                sql.SQL("translation_zh")
+                if "translation_zh" in cache_columns
+                else sql.SQL("NULL::text AS translation_zh"),
+            ]
+            if "tag_label" in cache_columns:
+                cache_select.append(sql.SQL("tag_label"))
+            elif "标签" in cache_columns:
+                cache_select.append(sql.SQL("{} AS tag_label").format(sql.Identifier("标签")))
+            else:
+                cache_select.append(sql.SQL("NULL::text AS tag_label"))
+
+            if "tag_reason" in cache_columns:
+                cache_select.append(sql.SQL("tag_reason"))
+            elif "原因" in cache_columns:
+                cache_select.append(sql.SQL("{} AS tag_reason").format(sql.Identifier("原因")))
+            else:
+                cache_select.append(sql.SQL("NULL::text AS tag_reason"))
+
+            cache_select.extend(
+                [
+                    sql.SQL("object_category")
+                    if "object_category" in cache_columns
+                    else sql.SQL("NULL::text AS object_category"),
+                    sql.SQL("plushable")
+                    if "plushable" in cache_columns
+                    else sql.SQL("NULL::text AS plushable"),
+                    sql.SQL("plushable_bool")
+                    if "plushable_bool" in cache_columns
+                    else sql.SQL("NULL::boolean AS plushable_bool"),
+                ]
+            )
             cache_query = sql.SQL(
                 """
-                SELECT translation_zh, object_category, plushable, plushable_bool
+                SELECT {}
                 FROM {}.{}
                 WHERE word = %s
                 LIMIT 1
                 """
-            ).format(sql.Identifier(schema_name), sql.Identifier(cache_table_name))
+            ).format(
+                sql.SQL(", ").join(cache_select),
+                sql.Identifier(schema_name),
+                sql.Identifier(cache_table_name),
+            )
             with conn.cursor() as cur:
                 cur.execute(cache_query, (normalized_word,))
                 row = cur.fetchone()
                 if row:
+                    cached_tag_label = row.get("tag_label")
+                    object_category = row.get("object_category") or info.get("object_category")
                     info = {
-                        "translation_zh": row.get("translation_zh"),
-                        "object_category": row.get("object_category"),
+                        "translation_zh": row.get("translation_zh") or info.get("translation_zh"),
+                        "tag_label": cached_tag_label or info.get("tag_label") or object_category,
+                        "reason": row.get("tag_reason") or info.get("reason"),
+                        "object_category": object_category,
                         "plushable": row.get("plushable"),
                         "plushable_bool": row.get("plushable_bool"),
                     }

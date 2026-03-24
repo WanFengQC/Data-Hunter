@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Truncate table before import.",
     )
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Drop and recreate table before import.",
+    )
     return parser.parse_args()
 
 
@@ -159,8 +164,10 @@ def read_csv_rows(file_path: Path, year: int, month: int, year_month: int) -> li
                     word.lower(),
                     normalize_text(row.get("word_zh")),
                     normalize_text(row.get("pos")),
-                    normalize_text(row.get("category")),
-                    normalize_text(row.get("plushable")),
+                    normalize_text(row.get("标签"))
+                    or normalize_text(row.get("对应标签"))
+                    or normalize_text(row.get("category")),
+                    normalize_text(row.get("原因")) or normalize_text(row.get("原因备注")),
                     to_int(row.get("freq")),
                     to_float(row.get("freq_ratio")),
                     normalize_text(row.get("freq_ratio_percent")),
@@ -187,8 +194,8 @@ def ensure_table(conn: psycopg.Connection, schema_name: str, table_name: str) ->
                     word TEXT NOT NULL,
                     word_zh TEXT,
                     pos TEXT,
-                    category TEXT,
-                    plushable TEXT,
+                    "标签" TEXT,
+                    "原因" TEXT,
                     freq BIGINT,
                     freq_ratio DOUBLE PRECISION,
                     freq_ratio_percent TEXT,
@@ -223,6 +230,17 @@ def ensure_table(conn: psycopg.Connection, schema_name: str, table_name: str) ->
     conn.commit()
 
 
+def drop_table(conn: psycopg.Connection, schema_name: str, table_name: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("DROP TABLE IF EXISTS {}.{}").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(table_name),
+            )
+        )
+    conn.commit()
+
+
 def truncate_table(conn: psycopg.Connection, schema_name: str, table_name: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -250,7 +268,7 @@ def upsert_rows(
     stmt = sql.SQL(
         """
         INSERT INTO {}.{} (
-            word, word_zh, pos, category, plushable,
+            word, word_zh, pos, "标签", "原因",
             freq, freq_ratio, freq_ratio_percent,
             coverage, coverage_percent, total_searches,
             year, month, year_month, source_file
@@ -263,8 +281,8 @@ def upsert_rows(
         ON CONFLICT (word, year_month) DO UPDATE SET
             word_zh = EXCLUDED.word_zh,
             pos = EXCLUDED.pos,
-            category = EXCLUDED.category,
-            plushable = EXCLUDED.plushable,
+            "标签" = EXCLUDED."标签",
+            "原因" = EXCLUDED."原因",
             freq = EXCLUDED.freq,
             freq_ratio = EXCLUDED.freq_ratio,
             freq_ratio_percent = EXCLUDED.freq_ratio_percent,
@@ -312,8 +330,11 @@ def main() -> None:
 
     conn = pg_connect()
     try:
+        if args.recreate:
+            drop_table(conn, args.schema, args.table)
+            print(f"Dropped table: {args.schema}.{args.table}")
         ensure_table(conn, args.schema, args.table)
-        if args.truncate:
+        if args.truncate and not args.recreate:
             truncate_table(conn, args.schema, args.table)
             print(f"Truncated table: {args.schema}.{args.table}")
 

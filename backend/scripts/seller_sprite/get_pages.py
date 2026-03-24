@@ -5,6 +5,8 @@ import requests
 import sys
 import random
 import threading
+import argparse
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -26,16 +28,17 @@ cookies = {
     'Hm_lvt_e0dfc78949a2d7c553713cb5c573a486': '1773740929,1773797927',
     'HMACCOUNT': 'DB02FE95993721CC',
     '_gcl_au': '1.1.1318762765.1773740930.651287507.1773822643.1773822643',
-    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1773914012',
-    '_clck': '1flo5tj%5E2%5Eg4l%5E0%5E2190',
-    'JSESSIONID': '40F5887223F941245EC843049D8E1F23',
-    '_gaf_fp': '32377257e53f20077d2c76b215243113',
-    'rank-login-user': '67258247711AM3XqydNMOsmTu6s34fdfcZ3ci9jbFnG7eekZ5CpYV4c2QjWRrPR47eZOQBqeVI',
-    'rank-login-user-info': '"eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjY3MjU4MjQ3NzExQU0zWHF5ZE5NT3NtVHU2czM0ZmRmY1ozY2k5amJGbkc3ZWVrWjVDcFlWNGMyUWpXUnJQUjQ3ZVpPUUJxZVZJIn0="',
-    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJKdnBTYzRkVWdTYVFqY2VoQzFqbzBBIiwiaWF0IjoxNzc0MjI3Njc2LCJleHAiOjE3NzQzMTQwNzYsIm5iZiI6MTc3NDIyNzYxNiwic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IkcifQ.WeQybV79qDxSHuR4edR1QfcV083IulicW14yiIWU85R113tTUy7NqVIAC21xSAoL2yXJ-ypdDsh8Ktpx1lJhHResT_YbSyPG-8T0sDGNl_tjJJsb62aL5_BWMybfkAyiJsqt9UhajCuSpSGQONdDwym0vL2Sbbuo-coOQV-eBt7kwUKWUWHoBFcxrSCKNc0ppu5eqQkPbvW_KzmWs9TJfPo7qiALK5wU97_UYSYyD9bGfbHpuOR69T5Qd6gF19YZvGsBBRIDQPW_e-1Zq9zbY5B5oKDeOO7SoUeBGAqz8l3UFNkJdcIoUcQaQR-8tOaBPQIt9kv0WcbbOt1RD8goOA',
-    '_ga_38NCVF2XST': 'GS2.1.s1774227623$o26$g1$t1774227679$j4$l0$h967807551',
-    '_clsk': 'gznq8p%5E1774227679905%5E3%5E0%5Ez.clarity.ms%2Fcollect',
-    '_ga_CN0F80S6GL': 'GS2.1.s1774227623$o22$g1$t1774227682$j1$l0$h0',
+    '_clck': '1flo5tj%5E2%5Eg4m%5E0%5E2190',
+    '_gaf_fp': 'e1bd3e6bd55428528752c0fbac779c2a',
+    'rank-login-user': '71627347715cRWjZUY4KjUE4ItMqRTYyRvJmNIl39Yxr8FiJu0T0CEJl67/6vmp+E58Ql7uuUc',
+    'rank-login-user-info': '"eyJuaWNrbmFtZSI6Ik5pdW5pdWRhZGR5MDAxIiwiaXNBZG1pbiI6ZmFsc2UsImFjY291bnQiOiJOaXVuaXVkYWRkeTAwMSIsInRva2VuIjoiNzE2MjczNDc3MTVjUldqWlVZNEtqVUU0SXRNcVJUWXlSdkptTklsMzlZeHI4RmlKdTBUMENFSmw2Ny82dm1wK0U1OFFsN3V1VWMifQ=="',
+    'Sprite-X-Token': 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJKM1ZEMngxSFQ5dWR1UjRqT1JsSUh3IiwiaWF0IjoxNzc0MzE1MDE3LCJleHAiOjE3NzQ0MDE0MTcsIm5iZiI6MTc3NDMxNDk1Nywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTAwNTQ0MywicGkiOjk5NjkyNywibm4iOiJOaXVuaXVkYWRkeTAwMSIsInN5cyI6IlNTX0NOIiwiZWQiOiJOIiwiZW0iOiJOaXVuaXVkYWRkeTAwMUBzZWxsZXJzcHJpdGUuY29tIiwibWwiOiJTIiwiZW5kIjoxNzgyODY4NjE3NjIyfQ.cHaCzDIOmAVR8MR0GPNczezPTgzzyXsD7xFIUVsF4imsIYOXncifeWrdFRsorTcpB1u8k3WXzMv876nB6g6Gq5dHLpAAM7fr4LmRK6MB2l31WN5rRpVjvcrtKSOtNWJhZNdrpVdeKoekmTckYw91vZJC7kgeg9Otcn0TwfnXVBNoyKseQhxbApG-KgwPW3VcIaWcbwSw81qTGyLqfzSd8f3g-gCZYWErdmawpbgR0ReIhyTxk8K3h2OEPYZqpJTi5cFnnZc5tUMw54CMxn8Hf9Ghxv-2s6NWtWv0pfZwfkmD0czZfgY85p-HwGG3QIrwF-_gO4Aexe4jbSPLVy76QQ',
+    'ao_lo_to_n': '71627347715cRWjZUY4KjUE4ItMqRTY4Y7ERcFDV5Fzrg5QlqgVVV23kIUjfawIm+z/qzekMbJ9XsfWaZf/po7xsZxphvTZc0BM+AUIO6SIGXWPwy8VsVpmDkIee+XpD8bSvfLZW9Z',
+    'JSESSIONID': 'F4C504C73D7112A101D2D56E044A94C4',
+    'Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486': '1774315021',
+    '_ga_CN0F80S6GL': 'GS2.1.s1774315008$o25$g1$t1774315033$j35$l0$h0',
+    '_clsk': '187kq7j%5E1774315035704%5E6%5E0%5Ez.clarity.ms%2Fcollect',
+    '_ga_38NCVF2XST': 'GS2.1.s1774315008$o30$g1$t1774315035$j33$l0$h1926338943',
 }
 
 
@@ -58,14 +61,14 @@ headers = {
     # 'cookie': 'current_guest=EYiHg0NJK4gX_251106-095964; k_size=50; _ga=GA1.1.921509791.1762393243; MEIQIA_TRACK_ID=355HvhtFLSsb3ha6EtaoXI8REvq; MEIQIA_VISIT_ID=355Hvm1gs4lE4tOTnOmRwYDAyxH; ecookie=L5DbLzsfdQi5eXZM_CN; t_size=50; t_order_field=created_time; t_order_flag=2; p_c_size=50; f406f3cf90e7c11a8569=773812463fbe5203f1dc781974f13535; _fp=6bdb7315c2b18cd40408207b8baba3a9; _clck=1flo5tj%5E2%5Eg4g%5E0%5E2190; 7ba84d0b95f668d77aff=8e047504da5b4d64dc49bd1815cc7daa; 6b7146199ef392cb4449=2dc923726476977ee4c5fef1731e30ed; Hm_lvt_e0dfc78949a2d7c553713cb5c573a486=1773740929,1773797927; HMACCOUNT=DB02FE95993721CC; _gcl_au=1.1.1318762765.1773740930.651287507.1773822643.1773822643; _gaf_fp=7073f7be342b8f0c3b32ba804a94f3a2; rank-login-user=3720883771/hRwrRCKBLGVx+hTs3aSuSZTx9/ASka6ax9QFnqlokTCq//VtZ8htBcujtKbNMsu; rank-login-user-info="eyJuaWNrbmFtZSI6IuaMvemjjueni+i+niIsImlzQWRtaW4iOmZhbHNlLCJhY2NvdW50IjoiMTMyKioqKjY0NjUiLCJ0b2tlbiI6IjM3MjA4ODM3NzEvaFJ3clJDS0JMR1Z4K2hUczNhU3VTWlR4OS9BU2thNmF4OVFGbnFsb2tUQ3EvL1Z0WjhodEJjdWp0S2JOTXN1In0="; Sprite-X-Token=eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2Nzk5NjI2YmZlMDQzZTBiYzI5NTEwMTE4ODA3YWExIn0.eyJqdGkiOiJ6TEpRdndSc25EaFBvYWt5SHlKN3pRIiwiaWF0IjoxNzczODIyNjczLCJleHAiOjE3NzM5MDkwNzMsIm5iZiI6MTc3MzgyMjYxMywic3ViIjoieXVueWEiLCJpc3MiOiJyYW5rIiwiYXVkIjoic2VsbGVyU3BhY2UiLCJpZCI6MTc2MjUwOSwicGkiOm51bGwsIm5uIjoi5oy96aOO56eL6L6eIiwic3lzIjoiU1NfQ04iLCJlZCI6Ik4iLCJwaG4iOiIxMzI1MjAwNjQ2NSIsImVtIjoiY24zNDM1NDI2NDI1QDE2My5jb20iLCJtbCI6IkcifQ.CIXXn6I0W20eDxJmDMybzLTHSyALwheDZzEfTNJrJRxaSBBwPQ4FLvC0MWpPZxEA2JjTFuh7-ikvsILyBwXYdM8P3n6uf34UaQCo5S6P0FBPopo4XQI-DO1ORHKEMpkB3WZGTfAVxXByMKRvZnOvzn_CSJabtXXAe943Ht50bmSI88arU0YM8ErrDc3-7gJ7EkBL6Ju5uE3-ImhlF365eIl9FOs3B_CpAlMHM0jl3Bs0StKjRoIqG4RH4BCGGRoLD3aOi5xhaOVm55OEwhx5vxpj4TCTXM6SQzZv45kF8yoF4paia-FLoZTdtUaCILKGlNELXrYiLWdK61emzP5H0Q; JSESSIONID=BDB1FC97633F9ADA9DD73B460A2CBADE; Hm_lpvt_e0dfc78949a2d7c553713cb5c573a486=1773822700; _ga_CN0F80S6GL=GS2.1.s1773820082$o17$g1$t1773822713$j46$l0$h0; _clsk=apai2h%5E1773822814542%5E41%5E1%5Eo.clarity.ms%2Fcollect; _ga_38NCVF2XST=GS2.1.s1773820082$o19$g1$t1773822814$j25$l0$h1187695156',
 }
 
-json_data = {
+BASE_REQUEST_JSON = {
     'rankGrowthType': 'W1',
     'size': 100,
     'page': 1,
     'movementMarket': '',
     'market': 'COM',
     'q': '',
-    'table': 'ara_202503',
+    'table': 'ara_202502',
     'reverseType': 'M',
     'departments': [
         'toys-and-games',
@@ -78,10 +81,13 @@ json_data = {
 }
 
 url = 'https://www.sellersprite.com/v3/api/aba-research'
-ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", "D:/ara"))
-save_dir = str(ARA_BASE_DIR / json_data['table'])
-
-os.makedirs(save_dir, exist_ok=True)
+DEFAULT_ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", "D:/ara"))
+DEFAULT_TABLE = str(BASE_REQUEST_JSON.get("table") or "ara_202502")
+REFERER_TEMPLATE = (
+    "https://www.sellersprite.com/v3/aba-research"
+    "?rankGrowthType=W1&size=100&page=2&movementMarket=&market=COM&q=&table={table}"
+    "&reverseType=M&keywordBidMatchType=exact&order%5Bfield%5D=searchfrequencyrank&order%5Bdesc%5D=false"
+)
 
 
 PAUSE_RETRY_MIN_SECONDS = 20 * 60
@@ -92,6 +98,69 @@ pause_times = 0
 
 class PauseAndRetry(Exception):
     pass
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Batch crawl SellerSprite ABA pages. "
+            "Use --tables for multiple tables, e.g. "
+            "--tables ara_202502 ara_202501 or --tables ara_202502,ara_202501"
+        )
+    )
+    parser.add_argument(
+        "--tables",
+        nargs="*",
+        default=None,
+        help="Table list to crawl. Supports comma or space separated values.",
+    )
+    parser.add_argument(
+        "--table",
+        default=None,
+        help="Single table, equivalent to --tables <table>.",
+    )
+    parser.add_argument(
+        "--base-dir",
+        default=str(DEFAULT_ARA_BASE_DIR),
+        help="Output base directory (default: env ARA_BASE_DIR or D:/ara).",
+    )
+    return parser.parse_args()
+
+
+def normalize_table_list(raw_items):
+    items = raw_items or []
+    output = []
+    seen = set()
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        for part in re.split(r"[,\s;，]+", text):
+            name = part.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            output.append(name)
+    return output
+
+
+def resolve_target_tables(args):
+    if args.table:
+        tables = normalize_table_list([args.table])
+        if tables:
+            return tables
+    if args.tables:
+        tables = normalize_table_list(args.tables)
+        if tables:
+            return tables
+    env_tables = os.getenv("ARA_TABLES", "")
+    if env_tables.strip():
+        tables = normalize_table_list([env_tables])
+        if tables:
+            return tables
+    return [DEFAULT_TABLE]
 
 
 def wait_for_manual_exit():
@@ -197,34 +266,44 @@ def print_error_detail(text: str):
         print(text[:1000])
 
 
-def fetch_and_save(page: int) -> str:
-    json_data['page'] = page
+def build_request_payload(table_name: str, page: int) -> dict:
+    payload = json.loads(json.dumps(BASE_REQUEST_JSON))
+    payload['table'] = table_name
+    payload['page'] = page
+    return payload
+
+
+def fetch_and_save(table_name: str, page: int, save_dir: str) -> str:
+    payload = build_request_payload(table_name, page)
+    request_headers = dict(headers)
+    request_headers['referer'] = REFERER_TEMPLATE.format(table=table_name)
 
     try:
         response = requests.post(
             url,
             cookies=cookies,
-            headers=headers,
-            json=json_data,
+            headers=request_headers,
+            json=payload,
             timeout=30
         )
     except Exception as e:
-        stop_program(f'请求 Page {page} 失败：{e}')
+        stop_program(f'[{table_name}] request page {page} failed: {e}')
 
     text = response.text
 
-    # 只要不是成功，就直接停，不写文件
+    # Stop immediately if response is not success.
     if not is_success_text(text):
-        print(f'Page {page} 返回不是成功状态，程序停止。')
-        print(f'HTTP状态码: {response.status_code}')
+        print(f'[{table_name}] Page {page} returned non-success status, stop now.')
+        print(f'HTTP status code: {response.status_code}')
         print_error_detail(text)
-        stop_program('检测到返回结果不是 {"code":"OK","message":"成功"}，已暂停。')
+        stop_program(f'[{table_name}] response is not {{"code":"OK","message":"??"}}, paused.')
 
     file_path = os.path.join(save_dir, f'keywords_page_{page}.html')
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(text)
 
     return text
+
 
 
 def get_total_pages(text: str) -> int:
@@ -238,35 +317,37 @@ def get_total_pages(text: str) -> int:
         stop_program(f'无法从第1页解析 total_pages：{e}')
 
 
-def run_once():
+def run_once(table_name: str, base_dir: Path):
+    save_dir = str(base_dir / table_name)
+    os.makedirs(save_dir, exist_ok=True)
     page1_file = os.path.join(save_dir, 'keywords_page_1.html')
 
     if is_valid_file(page1_file):
-        print('Page 1 已存在且成功，直接读取')
+        print(f'[{table_name}] Page 1 exists and is valid, reuse it.')
         with open(page1_file, 'r', encoding='utf-8') as f:
             text = f.read()
     else:
-        print('正在请求 Page 1')
-        text = fetch_and_save(1)
-        print(f'Saved {page1_file}')
+        print(f'[{table_name}] requesting Page 1')
+        text = fetch_and_save(table_name, 1, save_dir)
+        print(f'[{table_name}] Saved {page1_file}')
 
     total_pages = get_total_pages(text)
-    print(f'总页数: {total_pages}')
+    print(f'[{table_name}] total pages: {total_pages}')
 
     start_time = datetime.now()
     for page in range(1, total_pages + 1):
         file_path = os.path.join(save_dir, f'keywords_page_{page}.html')
 
         if is_valid_file(file_path):
-            print(f'Page {page} 已存在且成功，跳过')
+            print(f'[{table_name}] Page {page} exists and is valid, skip')
             continue
 
-        print(f'正在请求 Page {page}')
-        fetch_and_save(page)
-        print(f'Saved {file_path}')
+        print(f'[{table_name}] requesting Page {page}')
+        fetch_and_save(table_name, page, save_dir)
+        print(f'[{table_name}] Saved {file_path}')
 
         random_time = random.uniform(1.00, 3.00)
-        print(f'休息{random_time:.2f}s')
+        print(f'[{table_name}] sleep {random_time:.2f}s')
         time.sleep(random_time)
 
     end_time = datetime.now()
@@ -278,19 +359,33 @@ def run_once():
     minutes = (total_seconds % 3600) // 60
     seconds = total_seconds % 60
 
-    print(f'全部完成，共耗时{hours}时{minutes}分{seconds}秒')
+    print(f'[{table_name}] done, duration {hours}h {minutes}m {seconds}s')
 
 
 def main():
-    while True:
-        try:
-            run_once()
-            wait_for_manual_exit()
-            break
-        except PauseAndRetry as exc:
-            handle_pause_retry(str(exc))
+    global pause_times
+
+    args = parse_args()
+    tables = resolve_target_tables(args)
+    base_dir = Path(args.base_dir).expanduser().resolve()
+    os.makedirs(base_dir, exist_ok=True)
+
+    print(f'Output base dir: {base_dir}')
+    print(f'Tables to crawl (in order): {", ".join(tables)}')
+
+    for idx, table_name in enumerate(tables, start=1):
+        print(f'================ [{idx}/{len(tables)}] {table_name} ================')
+        pause_times = 0
+        while True:
+            try:
+                run_once(table_name, base_dir)
+                break
+            except PauseAndRetry as exc:
+                handle_pause_retry(f'[{table_name}] {exc}')
+
+    print('All table tasks finished.')
+    wait_for_manual_exit()
 
 
 if __name__ == '__main__':
     main()
-    

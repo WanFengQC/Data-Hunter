@@ -14,7 +14,7 @@ from deep_translator import GoogleTranslator
 from nltk import pos_tag
 from nltk.corpus import wordnet as wn
 
-from deepseek_classify_batch import classify_with_cache, async_client as deepseek_async_client
+from deepseek_classify_batch import async_client as deepseek_async_client
 
 # =========================
 # 配置
@@ -34,6 +34,24 @@ def get_env_float(name, default):
         return default
 
 
+def safe_float(value, default=0.0):
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return default
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return default
+
+
 def resolve_worker_count(total_batches, requested_workers, auto_workers, max_workers):
     if total_batches <= 0:
         return 1
@@ -48,8 +66,8 @@ def resolve_worker_count(total_batches, requested_workers, auto_workers, max_wor
 
 BASE_DIR = Path(__file__).resolve().parent
 ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
-INPUT_DIR = ARA_BASE_DIR / "ara_202508"
-OUTPUT_FILE = "word_frequency_analysis_202508.csv"
+INPUT_DIR = ARA_BASE_DIR / "ara_202503"
+OUTPUT_FILE = "word_frequency_analysis_202503.csv"
 
 TRANSLATION_CACHE_FILE = BASE_DIR / "translation_cache.json"
 OBJECT_CACHE_FILE = BASE_DIR / "object_category_cache.json"
@@ -943,63 +961,6 @@ def classify_tag_reason(words, zh_map):
 
 
 # =========================
-# 分类（核心）
-# =========================
-
-
-def classify_words(words, pos_map):
-    cache = load_cache(OBJECT_CACHE_FILE)
-    cache_changed = 0
-
-    for key, value in list(cache.items()):
-        cleaned = normalize_category_label(value, fallback="物体")
-        if cleaned != value:
-            cache[key] = cleaned
-            cache_changed += 1
-    if cache_changed:
-        print("已清理object类别缓存脏值:", cache_changed)
-
-    result = {}
-    need_ai = []
-
-    for word in words:
-        pos = pos_map[word]
-        cache_key = normalize_cache_key(word)
-
-        if not pos.startswith("NN"):
-            result[word] = "非名词"
-            continue
-
-        if cache_key in cache:
-            result[word] = normalize_category_label(cache[cache_key], fallback="物体")
-            cache[cache_key] = result[word]
-            continue
-
-        category = wordnet_classify(word)
-        if category:
-            decision = normalize_category_label(category, fallback="物体")
-            result[word] = decision
-            cache[cache_key] = decision
-            continue
-
-        need_ai.append(word)
-
-    print("需要AI分类:", len(need_ai))
-
-    if need_ai:
-        ai_result = classify_with_cache(need_ai)
-
-        for word in need_ai:
-            cache_key = normalize_cache_key(word)
-            decision = normalize_category_label(ai_result.get(word, ai_result.get(cache_key, "物体")), fallback="物体")
-            result[word] = decision
-            cache[cache_key] = decision
-
-    save_cache(cache, OBJECT_CACHE_FILE)
-    return result
-
-
-# =========================
 # 翻译
 # =========================
 
@@ -1087,7 +1048,7 @@ def main():
             rows.append(
                 {
                     "keyword": item.get("keyword", ""),
-                    "searches": float(item.get("searches", 0)),
+                    "searches": safe_float(item.get("searches"), 0.0),
                 }
             )
 
@@ -1110,17 +1071,14 @@ def main():
     total_kw = len(df)
     words = [word for word, _ in freq.most_common()]
 
-    pos_en = {}
     pos_zh = {}
 
     for word in words:
         tag, zh = get_pos(word)
-        pos_en[word] = tag
         pos_zh[word] = zh
 
     zh_map = translate(words)
     tag_reason = classify_tag_reason(words, zh_map)
-    category = classify_words(words, pos_en)
 
     result_rows = []
 
@@ -1132,7 +1090,6 @@ def main():
                 "word": word,
                 "word_zh": zh_map.get(word, ""),
                 "pos": pos_zh[word],
-                "category": category[word],
                 "标签": tag_reason.get(word, {}).get("标签", "解析失败"),
                 "原因": tag_reason.get(word, {}).get("原因", build_parse_failed_entry(word, zh_map).get("原因")),
                 "freq": frequency,
@@ -1148,7 +1105,6 @@ def main():
         "word",
         "word_zh",
         "pos",
-        "category",
         "标签",
         "原因",
         "freq",

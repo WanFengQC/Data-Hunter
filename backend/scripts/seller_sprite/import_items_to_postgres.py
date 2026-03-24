@@ -22,7 +22,7 @@ ARA_BASE_DIR = Path(os.getenv("ARA_BASE_DIR", r"D:\ara"))
 # =========================
 # If CLI args `--folder/--folders` are not provided, these folders will be used.
 # Example: ["ara_202512"] or ["ara_202512", "ara_202601"]
-IMPORT_FOLDERS: list[str] = ["ara_202505","ara_202504"]
+IMPORT_FOLDERS: list[str] = ["ara_202503"]
 
 
 def load_env_files() -> None:
