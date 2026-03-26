@@ -1,10 +1,5 @@
 ﻿<template>
   <main class="dashboard">
-    <section class="dashboard-header">
-      <h1>Data Hunter Dashboard</h1>
-      <p>采集、处理和分析结果总览</p>
-    </section>
-
     <section class="word-trend-panel">
       <div class="word-trend-header">
         <h2>搜索量趋势搜索</h2>

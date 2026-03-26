@@ -23,6 +23,7 @@ function parseYearMonth(label: string): number | null {
 function normalizeTrendPoint(item: Record<string, unknown>): PgTrendPoint | null {
   const rawLabel =
     toStringValue(item.label) ||
+    toStringValue(item.dk) ||
     toStringValue(item.year_month) ||
     (() => {
       const year = toNumber(item.year);
@@ -36,6 +37,7 @@ function normalizeTrendPoint(item: Record<string, unknown>): PgTrendPoint | null
     label: rawLabel,
     searches:
       toNumber(item.searches) ??
+      toNumber(item.sales) ??
       toNumber(item.total_searches) ??
       toNumber(item.search) ??
       toNumber(item.value),
