@@ -144,17 +144,26 @@ systemctl enable docker
 systemctl start docker
 ```
 
-### 2. 上传代码
+### 2. 拉取仓库代码
 
-将整个项目上传到服务器，例如：
+在服务器上直接拉取 GitHub 仓库：
 
 ```bash
-scp -r data_hunter root@192.168.110.107:/opt/
+cd /opt
+git clone https://github.com/WanFengQC/Data-Hunter.git
+cd /opt/Data-Hunter
 ```
 
 ### 3. 修改后端配置
 
-编辑：
+先复制配置模板：
+
+```bash
+cd /opt/Data-Hunter
+cp backend/.env.example backend/.env
+```
+
+再编辑：
 - [backend/.env](C:\Users\EDY\WebstormProjects\data_hunter\backend\.env)
 
 确认 `MONGO_URI`、`PG_HOST`、`PG_DB` 等连接信息正确。
@@ -162,7 +171,7 @@ scp -r data_hunter root@192.168.110.107:/opt/
 ### 4. 启动
 
 ```bash
-cd /opt/data_hunter
+cd /opt/Data-Hunter
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
@@ -170,6 +179,14 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ```bash
 docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+后续更新代码：
+
+```bash
+cd /opt/Data-Hunter
+git pull
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 ### 5. 查看状态

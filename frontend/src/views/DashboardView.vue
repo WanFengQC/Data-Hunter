@@ -90,7 +90,7 @@
 
     <section v-if="hasKeywordSearchTriggered" class="keyword-top10-panel">
       <div class="keyword-top10-header">
-        <h2>关键词 Top10</h2>
+        <h2>关键词列表</h2>
         <div v-if="top10WordTabs.length" class="keyword-top10-tabs">
           <button
             v-for="tab in top10WordTabs"
@@ -105,7 +105,7 @@
       </div>
 
       <div v-if="!wordTrendResult" class="keyword-top10-empty">查询关键词后显示关键词数据</div>
-      <div v-else-if="activeTop10Data?.loading" class="keyword-top10-loading">Top10 加载中...</div>
+      <div v-else-if="activeTop10Data?.loading" class="keyword-top10-loading">列表加载中...</div>
       <div v-else-if="activeTop10Data?.error" class="keyword-top10-error">{{ activeTop10Data.error }}</div>
       <div
         v-else-if="activeTop10Data && activeTop10Data.items.length"
