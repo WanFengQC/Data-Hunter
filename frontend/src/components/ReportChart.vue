@@ -16,6 +16,9 @@ const props = withDefaults(
     height: "320px",
   }
 );
+const emit = defineEmits<{
+  (e: "chart-click", params: unknown): void;
+}>();
 
 const chartRef = ref<HTMLElement | null>(null);
 let chart: echarts.ECharts | null = null;
@@ -24,6 +27,9 @@ function renderChart(): void {
   if (!chartRef.value) return;
   if (!chart) {
     chart = echarts.init(chartRef.value);
+    chart.on("click", (params) => {
+      emit("chart-click", params);
+    });
   }
   chart.setOption(props.option, { notMerge: true });
 }

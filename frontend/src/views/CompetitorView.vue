@@ -460,8 +460,10 @@ const loading = ref(false);
 const loadingMore = ref(false);
 const error = ref("");
 const yearMonthOptions = ref<number[]>([]);
-const selectedYear = ref(0);
-const selectedMonth = ref(0);
+const DEFAULT_YEAR = 2026;
+const DEFAULT_MONTH = 2;
+const selectedYear = ref(DEFAULT_YEAR);
+const selectedMonth = ref(DEFAULT_MONTH);
 
 const orderedColumns = ref<string[]>(COLUMN_DEFS.map((item) => item.key));
 const textFilters = ref<Record<string, TextFilterValue>>({});
@@ -1204,6 +1206,11 @@ watch(
 onMounted(async () => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   await loadYearMonths();
+  const hasDefaultYearMonth = yearMonthOptions.value.includes(DEFAULT_YEAR * 100 + DEFAULT_MONTH);
+  if (!hasDefaultYearMonth) {
+    selectedYear.value = 0;
+    selectedMonth.value = 0;
+  }
   await reloadTable();
 });
 
