@@ -35,6 +35,7 @@
             <option value="asc">升序</option>
           </select>
         </label>
+        <button class="secondary-btn" type="button" @click="openReport">查看报告</button>
       </div>
 
       <div v-if="error" class="table-error">{{ error }}</div>
@@ -102,18 +103,14 @@
                           loading="lazy"
                         />
                         <div class="product-copy">
-                          <a
-                            v-if="cellText(row.asin)"
-                            class="product-title"
-                            :href="amazonUrl(row.asin)"
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
+                            class="product-title product-title-copy"
+                            :title="`${cellText(row.title) || cellText(row.asin) || '-'}（点击复制）`"
+                            @click="copyText(cellText(row.title) || cellText(row.asin))"
                           >
                             {{ cellText(row.title) || cellText(row.asin) }}
-                          </a>
-                          <div v-else class="product-title plain">
-                            {{ cellText(row.title) || "-" }}
-                          </div>
+                          </button>
 
                           <div class="product-line">
                             <span class="product-meta-label">ASIN:</span>
@@ -370,11 +367,14 @@
       :points="trendModalPoints"
       @close="trendModalOpen = false"
     />
+
+    <div v-if="copyToast" class="copy-toast">{{ copyToast }}</div>
   </main>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 
 import { fetchPgFilterOptions, fetchPgItems, fetchPgYearMonthsByTable } from "@/api/data";
 import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
@@ -383,6 +383,7 @@ import type { PgFilterOption, PgTrendPoint } from "@/types/data";
 
 const LONG_PRESS_MS = 220;
 const TARGET_TABLE = "seller_sprite_competitor_items";
+const router = useRouter();
 
 type TextFilterOp =
   | "contains"
@@ -496,11 +497,13 @@ const workingFilterValues = ref<string[]>([]);
 const trendModalOpen = ref(false);
 const trendModalTitle = ref("");
 const trendModalPoints = ref<PgTrendPoint[]>([]);
+const copyToast = ref("");
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
 let activeFilterRequestSeq = 0;
 let scrollCheckRaf = 0;
+let copyToastTimer: ReturnType<typeof setTimeout> | null = null;
 
 const displayColumns = computed(() => {
   const base = COLUMN_DEFS.map((item) => item.key);
@@ -652,6 +655,38 @@ function amazonUrl(asin: unknown): string {
   return value ? `https://www.amazon.com/dp/${encodeURIComponent(value)}` : "https://www.amazon.com";
 }
 
+async function copyText(value: string): Promise<void> {
+  const text = String(value || "").trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showCopyToast("标题已复制");
+  } catch {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      showCopyToast("标题已复制");
+    } catch {
+      showCopyToast("复制失败");
+    }
+  }
+}
+
+function showCopyToast(message: string): void {
+  copyToast.value = message;
+  if (copyToastTimer) clearTimeout(copyToastTimer);
+  copyToastTimer = setTimeout(() => {
+    copyToast.value = "";
+    copyToastTimer = null;
+  }, 1400);
+}
+
 function previewText(row: Record<string, unknown>, col: string): string {
   switch (col) {
     case "product":
@@ -691,6 +726,16 @@ function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoin
   trendModalTitle.value = title ? `${title} 趋势数据` : "趋势数据";
   trendModalPoints.value = points;
   trendModalOpen.value = true;
+}
+
+function openReport(): void {
+  void router.push({
+    name: "competitor-report",
+    query: {
+      year: selectedYear.value || undefined,
+      month: selectedMonth.value || undefined,
+    },
+  });
 }
 
 function normalizedValueFilters(): Record<string, string[]> {
@@ -1167,6 +1212,7 @@ onBeforeUnmount(() => {
   if (longPressTimer) clearTimeout(longPressTimer);
   if (filterTimer) clearTimeout(filterTimer);
   if (scrollCheckRaf) window.cancelAnimationFrame(scrollCheckRaf);
+  if (copyToastTimer) clearTimeout(copyToastTimer);
   cleanupDragHandlers();
   closeFilterMenu();
 });
@@ -1414,6 +1460,12 @@ onBeforeUnmount(() => {
 }
 
 .product-title {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  width: 100%;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1429,8 +1481,14 @@ onBeforeUnmount(() => {
   color: #f97316;
 }
 
-.product-title.plain {
-  cursor: default;
+.product-title-copy {
+  cursor: pointer;
+  font: inherit;
+}
+
+.product-title-copy:focus-visible {
+  outline: 2px solid rgba(58, 104, 216, 0.28);
+  outline-offset: 2px;
 }
 
 .product-line {
@@ -1791,6 +1849,21 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   font-size: 0.85rem;
   color: #374151;
+}
+
+.copy-toast {
+  position: fixed;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  z-index: 1300;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(31, 47, 74, 0.92);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
 }
 
 .competitor-footer-controls :deep(.rows-control) {

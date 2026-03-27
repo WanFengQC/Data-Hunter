@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import DashboardView from "@/views/DashboardView.vue";
 import CompetitorView from "@/views/CompetitorView.vue";
+import CompetitorReportView from "@/views/CompetitorReportView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -19,6 +20,11 @@ const router = createRouter({
       path: "/competitors",
       name: "competitors",
       component: CompetitorView,
+    },
+    {
+      path: "/competitors/report",
+      name: "competitor-report",
+      component: CompetitorReportView,
     },
   ],
 });

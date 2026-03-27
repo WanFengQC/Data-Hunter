@@ -168,27 +168,38 @@ onBeforeUnmount(() => {
 }
 
 .trend-modal-header {
-  height: 52px;
+  min-height: 52px;
   border-bottom: 1px solid #e2ebfb;
-  padding: 0 14px;
+  padding: 10px 14px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .trend-modal-title {
+  flex: 1;
+  min-width: 0;
   font-size: 16px;
   font-weight: 700;
   color: #1f3358;
+  line-height: 1.35;
 }
 
 .trend-modal-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid #bfd0ef;
   background: #f6f9ff;
   color: #234688;
   border-radius: 8px;
   height: 34px;
-  padding: 0 12px;
+  min-width: 64px;
+  padding: 0 14px;
+  white-space: nowrap;
+  line-height: 1;
   cursor: pointer;
 }
 
