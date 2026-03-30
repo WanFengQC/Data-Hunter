@@ -226,42 +226,48 @@
             总搜索量TOP10
           </button>
         </div>
-        <div class="table-filters growth-top10-filters">
-          <label>
-            年份
-            <select v-model.number="growthTop10SelectedYear">
-              <option :value="0">全部</option>
-              <option v-for="y in growthTop10YearOptions" :key="`growth-year-${y}`" :value="y">{{ y }}</option>
-            </select>
-          </label>
-          <label>
-            月份
-            <select v-model.number="growthTop10SelectedMonth">
-              <option :value="0">全部</option>
-              <option v-for="m in growthTop10MonthOptions" :key="`growth-month-${m}`" :value="m">
-                {{ String(m).padStart(2, "0") }}
-              </option>
-            </select>
-          </label>
-          <label>
-            搜索量最小值
-            <input
-              v-model="growthTop10SearchMin"
-              type="number"
-              min="0"
-              step="1"
-              placeholder="min"
-            />
-          </label>
-          <label>
-            搜索量最大值
-            <input
-              v-model="growthTop10SearchMax"
-              type="number"
-              min="0"
-              step="1"
-              placeholder="max"
-            />
+        <div class="growth-top10-filters-wrap">
+          <div class="table-filters growth-top10-filters">
+            <label>
+              年份
+              <select v-model.number="growthTop10SelectedYear">
+                <option :value="0">全部</option>
+                <option v-for="y in growthTop10YearOptions" :key="`growth-year-${y}`" :value="y">{{ y }}</option>
+              </select>
+            </label>
+            <label>
+              月份
+              <select v-model.number="growthTop10SelectedMonth">
+                <option :value="0">全部</option>
+                <option v-for="m in growthTop10MonthOptions" :key="`growth-month-${m}`" :value="m">
+                  {{ String(m).padStart(2, "0") }}
+                </option>
+              </select>
+            </label>
+            <label>
+              搜索量最小值
+              <input
+                v-model="growthTop10SearchMin"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="min"
+              />
+            </label>
+            <label>
+              搜索量最大值
+              <input
+                v-model="growthTop10SearchMax"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="max"
+              />
+            </label>
+          </div>
+          <label v-if="growthTop10AverageText" class="growth-top10-average-field">
+            平均总搜索量
+            <div class="growth-top10-average">{{ growthTop10AverageValueText }}</div>
           </label>
         </div>
       </div>
@@ -808,6 +814,8 @@ const growthTop10SelectedYear = ref(0);
 const growthTop10SelectedMonth = ref(0);
 const growthTop10SearchMin = ref<string | number>("");
 const growthTop10SearchMax = ref<string | number>("");
+const growthTop10AverageTotalSearches = ref<number | null>(null);
+const growthTop10AverageLabel = ref("平均总搜索量");
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -984,6 +992,14 @@ const growthTop10SortField = computed(() =>
 const growthTop10Columns = computed(() => {
   const availableSet = new Set(growthTop10ColumnsRaw.value);
   return GROWTH_TOP10_VISIBLE_COLUMNS.filter((col) => availableSet.has(col));
+});
+const growthTop10AverageText = computed(() => {
+  if (growthTop10AverageTotalSearches.value === null || Number.isNaN(growthTop10AverageTotalSearches.value)) return "";
+  return `${growthTop10AverageLabel.value}: ${Math.round(growthTop10AverageTotalSearches.value).toLocaleString("en-US")}`;
+});
+const growthTop10AverageValueText = computed(() => {
+  if (growthTop10AverageTotalSearches.value === null || Number.isNaN(growthTop10AverageTotalSearches.value)) return "";
+  return Math.round(growthTop10AverageTotalSearches.value).toLocaleString("en-US");
 });
 const filterRuleNeedsValue = computed(
   () => filterTextRule.value.op !== "is_blank" && filterTextRule.value.op !== "is_not_blank"
@@ -1258,6 +1274,8 @@ async function loadGrowthTop10(): Promise<void> {
   growthTop10Error.value = "";
   growthTop10Rows.value = [];
   growthTop10ColumnsRaw.value = [];
+  growthTop10AverageTotalSearches.value = null;
+  growthTop10AverageLabel.value = growthTop10Mode.value === "quarterly" ? "当季平均总搜索量" : "当月平均总搜索量";
   const minText = String(growthTop10SearchMin.value ?? "").trim();
   const maxText = String(growthTop10SearchMax.value ?? "").trim();
   const hasMin = minText.length > 0;
@@ -1300,12 +1318,18 @@ async function loadGrowthTop10(): Promise<void> {
     if (requestSeq !== activeGrowthTop10RequestSeq) return;
     growthTop10ColumnsRaw.value = data.columns || [];
     growthTop10Rows.value = data.items || [];
+    growthTop10AverageTotalSearches.value =
+      typeof data.average_total_searches === "number" && Number.isFinite(data.average_total_searches)
+        ? data.average_total_searches
+        : null;
+    growthTop10AverageLabel.value = String(data.average_label || growthTop10AverageLabel.value);
   } catch (error) {
     if (requestSeq !== activeGrowthTop10RequestSeq) return;
     console.error("loadGrowthTop10 failed:", error);
     growthTop10Error.value = "增长率TOP10查询失败，请稍后重试";
     growthTop10ColumnsRaw.value = [];
     growthTop10Rows.value = [];
+    growthTop10AverageTotalSearches.value = null;
   } finally {
     if (requestSeq === activeGrowthTop10RequestSeq) {
       growthTop10Loading.value = false;
@@ -2384,10 +2408,43 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.growth-top10-filters-wrap {
+  margin-left: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.growth-top10-average-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 120px;
+  color: #2c477f;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .growth-top10-filters {
   margin-top: 0;
-  margin-left: auto;
   justify-content: flex-end;
+}
+
+.growth-top10-average {
+  display: inline-flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 12px;
+  border: 1px solid #d7e5fb;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #36518b;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .growth-top10-filters select,

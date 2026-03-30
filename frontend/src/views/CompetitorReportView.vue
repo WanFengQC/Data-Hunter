@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="dashboard competitor-report-page">
     <section class="report-hero">
       <div>
@@ -8,7 +8,7 @@
       </div>
       <div class="report-actions">
         <button class="secondary-btn" type="button" @click="exportReport">导出报告</button>
-        <button class="secondary-btn" type="button" @click="goBack">返回竞品表</button>
+        <button class="secondary-btn" type="button" @click="goBack">返回查竞品</button>
       </div>
     </section>
 
@@ -137,7 +137,7 @@
         <div class="report-panel-header">
           <h3>年度月度汇总</h3>
           <div class="report-chip-group">
-            <span class="report-chip">分类 {{ currentCategoryPath }}</span>
+            <span class="report-chip">分类 {{ currentCategoryLabel }}</span>
             <span class="report-chip">快照 {{ focusLabel }}</span>
           </div>
         </div>
@@ -156,9 +156,9 @@
       <section class="report-panel"><div class="report-panel-header"><h3>行业销售趋势</h3></div><ReportChart :option="salesTrendOption" height="360px" /></section>
 
       <section class="report-grid">
-        <article class="report-panel"><div class="report-panel-header"><h3>商品集中度</h3><span class="report-chip">TOP10 {{ formatPercent(productTop10Share) }}</span></div><ReportChart :option="productOption" height="320px" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>品牌集中度</h3><span class="report-chip">TOP10 {{ formatPercent(brandTop10Share) }}</span></div><ReportChart :option="brandOption" height="320px" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家集中度</h3><span class="report-chip">TOP10 {{ formatPercent(sellerTop10Share) }}</span></div><ReportChart :option="sellerOption" height="320px" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>商品集中度</h3><span class="report-chip">TOP10 {{ formatPercent(productTop10Share) }}</span></div><ReportChart :option="productOption" height="320px" @chart-click="openProductAmazon" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>品牌集中度</h3><span class="report-chip">TOP10 {{ formatPercent(brandTop10Share) }}</span></div><ReportChart :option="brandOption" height="320px" @chart-click="openBrandBucketModal" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>卖家集中度</h3><span class="report-chip">TOP10 {{ formatPercent(sellerTop10Share) }}</span></div><ReportChart :option="sellerOption" height="320px" @chart-click="openSellerBucketModal" /></article>
       </section>
 
       <section class="report-grid report-grid-2">
@@ -168,17 +168,17 @@
 
       <section class="report-grid report-grid-2">
         <article class="report-panel"><div class="report-panel-header"><h3>卖家类型分布</h3></div><div class="report-grid report-grid-2 report-grid-tight"><ReportChart :option="sellerTypeShareOption" height="320px" /><ReportChart :option="sellerTypeQualityOption" height="320px" /></div></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家所属地分布</h3></div><ReportChart :option="sellerNationOption" height="320px" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>卖家所属地分布</h3></div><ReportChart :option="sellerNationOption" height="320px" @chart-click="openSellerNationBucketModal" /></article>
       </section>
 
       <section class="report-grid report-grid-2">
-        <article class="report-panel"><div class="report-panel-header"><h3>上架时间分布</h3></div><ReportChart :option="listingAgeOption" height="320px" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>上架趋势分布</h3></div><ReportChart :option="listingTrendOption" height="320px" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>上架时间分布</h3></div><ReportChart :option="listingAgeOption" height="320px" @chart-click="openListingAgeBucketModal" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>上架趋势分布</h3></div><ReportChart :option="listingTrendOption" height="320px" @chart-click="openListingTrendBucketModal" /></article>
       </section>
 
       <section class="report-grid report-grid-2">
-        <article class="report-panel"><div class="report-panel-header"><h3>评论数分布</h3></div><ReportChart :option="reviewOption" height="320px" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>评分值分布</h3></div><ReportChart :option="ratingOption" height="320px" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>评论数分布</h3></div><ReportChart :option="reviewOption" height="320px" @chart-click="openReviewBucketModal" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>评分值分布</h3></div><ReportChart :option="ratingOption" height="320px" @chart-click="openRatingBucketModal" /></article>
         <article class="report-panel report-price-panel">
           <div class="report-panel-header">
             <h3>价格分布</h3>
@@ -200,7 +200,7 @@
         <div class="report-modal-card">
           <div class="report-modal-header">
             <div>
-              <h3>商品销量分布</h3>
+              <h3>{{ priceBucketModal.title }}</h3>
               <p>{{ priceBucketModal.label }} · {{ formatInteger(priceBucketModal.rows.length) }} 个商品</p>
             </div>
             <button class="report-modal-close" type="button" @click="closePriceBucketModal">×</button>
@@ -224,12 +224,40 @@ import { fetchPgItems } from "@/api/data";
 type Row = Record<string, unknown>;
 type Metric = { label: string; value: string };
 type RankRow = { name: string; count: number; units: number; amount: number; newUnits: number; newAmount: number; newCount: number; share: number };
-type Dist = { label: string; count: number; units: number; share: number; extra?: number; name?: string; row?: Row; amount?: number; newAmount?: number; newCount?: number; entityLabel?: string };
+type Dist = { label: string; count: number; units: number; share: number; extra?: number; name?: string; key?: string; rows?: Row[]; row?: Row; amount?: number; newAmount?: number; newCount?: number; entityLabel?: string };
 type MonthSum = { ym: number; label: string; amount: number; units: number; avgBsr: number | null };
 type CategoryOption = { path: string; locale: string };
 const CATEGORY_TEDDY = "Toys & Games:Stuffed Animals & Plush Toys:Stuffed Animals & Teddy Bears";
 const CATEGORY_PILLOWS = "Toys & Games:Stuffed Animals & Plush Toys:Plush Pillows";
 const CATEGORY_ALL = "ALL";
+const SELLER_NATION_ZH: Record<string, string> = {
+  US: "美国",
+  CN: "中国",
+  HK: "中国香港",
+  GB: "英国",
+  CA: "加拿大",
+  SG: "新加坡",
+  NL: "荷兰",
+  DK: "丹麦",
+  IL: "以色列",
+  AU: "澳大利亚",
+  JP: "日本",
+  DE: "德国",
+  FR: "法国",
+  IT: "意大利",
+  ES: "西班牙",
+  MX: "墨西哥",
+  IN: "印度",
+  TW: "中国台湾",
+  KR: "韩国",
+  TR: "土耳其",
+  TH: "泰国",
+  VN: "越南",
+  MY: "马来西亚",
+  ID: "印度尼西亚",
+  PH: "菲律宾",
+  NA: "未知",
+};
 const route = useRoute(), router = useRouter(), loading = ref(true), loadingText = ref("准备数据..."), error = ref(""), allRows = ref<Row[]>([]), activeCategoryPath = ref(""), monthHeaders = [1,2,3,4,5,6,7,8,9,10,11,12];
 const selectedYear = computed(() => Number(route.query.year || 0) || 0), selectedMonth = computed(() => Number(route.query.month || 0) || 0);
 const switchingFilters = ref(false);
@@ -239,8 +267,9 @@ const newProductMode = ref<"1" | "3" | "6" | "12" | "custom">("6");
 const newProductCustomMonths = ref(6);
 const priceRangeStart = ref(5);
 const priceRangeStep = ref(5);
-const priceBucketModal = ref<{ open: boolean; label: string; rows: Row[] }>({
+const priceBucketModal = ref<{ open: boolean; title: string; label: string; rows: Row[] }>({
   open: false,
+  title: "商品销量分布",
   label: "",
   rows: [],
 });
@@ -455,8 +484,8 @@ const formatWanNumber = fwn;
 function normalizeCategoryPath(value: unknown): string {
   const text = t(value);
   if (!text) return "";
-  if (text.includes("Plush Pillows") || text.includes("长毛绒枕头")) return CATEGORY_PILLOWS;
-  if (text.includes("Stuffed Animals & Teddy Bears") || text.includes("填充动物和泰迪熊") || text.includes("填充的动物")) return CATEGORY_TEDDY;
+  if (text.includes("Plush Pillows")) return CATEGORY_PILLOWS;
+  if (text.includes("Stuffed Animals & Teddy Bears")) return CATEGORY_TEDDY;
   return "";
 }
 function getCategoryLabel(path: string): string {
@@ -466,7 +495,7 @@ function getCategoryLabel(path: string): string {
   return path;
 }
 const group = (rows: Row[], field: string) => { const total = sum(rows.map(r => n(r.totalunits))); const m = new Map<string, RankRow>(); rows.forEach(row => { const key = t(row[field]) || "未知"; const cur = m.get(key) || { name:key,count:0,units:0,amount:0,newUnits:0,newAmount:0,newCount:0,share:0 }; const units = n(row.totalunits) || 0; const amount = n(row.totalamount) || 0; cur.count += 1; cur.units += units; cur.amount += amount; if (isNew(row)) { cur.newUnits += units; cur.newAmount += amount; cur.newCount += 1; } m.set(key, cur); }); return [...m.values()].sort((a,b)=>b.units-a.units).map(r => ({ ...r, share: total ? r.units/total : 0 })); };
-const bucket = (rows: Row[], getter: (row: Row) => number | null, edges: number[], labels: string[]) => { const total = sum(rows.map(r => n(r.totalunits))); const out = labels.map(label => ({ label, count:0, units:0, share:0 })); rows.forEach(row => { const value = getter(row); if (value === null) return; for (let i=0;i<edges.length-1;i+=1) if (value >= edges[i] && value < edges[i+1]) { out[i].count += 1; out[i].units += n(row.totalunits) || 0; break; } }); out.forEach(item => item.share = total ? item.units/total : 0); return out; };
+const bucket = (rows: Row[], getter: (row: Row) => number | null, edges: number[], labels: string[]) => { const total = sum(rows.map(r => n(r.totalunits))); const out = labels.map(label => ({ label, count:0, units:0, share:0, rows: [] as Row[] })); rows.forEach(row => { const value = getter(row); if (value === null) return; for (let i=0;i<edges.length-1;i+=1) if (value >= edges[i] && value < edges[i+1]) { out[i].count += 1; out[i].units += n(row.totalunits) || 0; out[i].rows.push(row); break; } }); out.forEach(item => item.share = total ? item.units/total : 0); return out; };
 const categoryOptions = computed<CategoryOption[]>(() => {
   const map = new Map<string, string>();
   allRows.value.forEach((row) => {
@@ -535,14 +564,14 @@ const topProducts = computed(() => [...snapshotRows.value].sort((a,b)=>(n(b.tota
 const brandRank = computed(() => group(snapshotRows.value, "brand").slice(0,10)), sellerRank = computed(() => group(snapshotRows.value, "sellername").slice(0,10));
 const productTop10Share = computed(() => metric.value.units ? sum(topProducts.value.map(r=>n(r.totalunits)))/metric.value.units : 0), brandTop10Share = computed(() => metric.value.units ? sum(brandRank.value.map(r=>r.units))/metric.value.units : 0), sellerTop10Share = computed(() => metric.value.units ? sum(sellerRank.value.map(r=>r.units))/metric.value.units : 0);
 const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"近30天销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
-const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"近30天均销量", value:fi(metric.value.units) }, { label:"近30天总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"近30天评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
+const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"近30天总销量", value:fi(metric.value.units) }, { label:"近30天总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"近30天评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
 const topRows = computed<Metric[]>(() => {
   const prefix = `销量前${topProductCount.value}商品`;
   return [
     { label:`${prefix}样本总数`, value:fi(topProducts.value.length) },
     { label:`${prefix}BSR均值`, value:fi(avg(topProducts.value.map(r=>n(r.bsrrank)))) },
-    { label:`${prefix}近30天均销量`, value:fi(sum(topProducts.value.map(r=>n(r.totalunits)))) },
-    { label:`${prefix}近30天均销售额`, value:fc(sum(topProducts.value.map(r=>n(r.totalamount)))) },
+    { label:`${prefix}近30天总销量`, value:fi(sum(topProducts.value.map(r=>n(r.totalunits)))) },
+    { label:`${prefix}近30天总销售额`, value:fc(sum(topProducts.value.map(r=>n(r.totalamount)))) },
     { label:`${prefix}平均价格`, value:fc(avg(topProducts.value.map(r=>n(r.price)))) },
     { label:`${prefix}近30天评论平均增长数`, value:fd(avg(topProducts.value.map(r=>n(r.reviewsdelta))),1) },
     { label:`${prefix}平均评论数`, value:fd(avg(topProducts.value.map(r=>n(r.reviews))),0) },
@@ -556,8 +585,8 @@ const newRows = computed<Metric[]>(() => {
     { label:"新品占比", value:fp(metric.value.newRatio) },
     { label:"新品评分数(最高/平均/最低)", value:`${fd(metric.value.newMax,1)}/${fd(metric.value.newAvgRating,1)}/${fd(metric.value.newMin,1)}` },
     { label:"新品平均价格", value:fc(metric.value.newAvgPrice) },
-    { label:`${prefix}近30天均销量`, value:fi(metric.value.newUnits) },
-    { label:`${prefix}近30天均销售额`, value:fc(metric.value.newAmount) },
+    { label:`${prefix}近30天总销量`, value:fi(metric.value.newUnits) },
+    { label:`${prefix}近30天总销售额`, value:fc(metric.value.newAmount) },
     { label:"商品首次上架时间", value:fdate(metric.value.firstDate) },
     { label:"商品最新上架时间", value:fdate(metric.value.lastDate) },
   ];
@@ -702,7 +731,14 @@ const concentration = (mode: "product"|"brand"|"seller"): Dist[] => {
     }));
 };
 const byField = (field: string, limit = 10): Dist[] => { const total = metric.value.units || 0, map = new Map<string, Dist>(); snapshotRows.value.forEach(r => { const key = t(r[field]) || "未知", cur = map.get(key) || { label:key, count:0, units:0, share:0 }; cur.count += 1; cur.units += n(r.totalunits) || 0; map.set(key, cur); }); return [...map.values()].sort((a,b)=>b.count-a.count).slice(0,limit).map(i => ({ ...i, share: total ? i.units/total : 0 })); };
-const productOption = computed(() => lineBar(concentration("product"), "销量", "销量占比", "新品销量", true, true, true)), brandOption = computed(() => lineBar(concentration("brand"), "销量", "销量占比", "新品销量", true, false, true, true)), sellerOption = computed(() => lineBar(concentration("seller"), "销量", "销量占比", "新品销量", true, false, true, true));
+const sellerNationLabel = (value: unknown) => {
+  const code = t(value).trim().toUpperCase();
+  if (!code || code === "UNKNOWN") return "未知";
+  return SELLER_NATION_ZH[code] || code;
+};
+const productOption = computed(() => lineBar(concentration("product"), "销量", "销量占比", "新品销量", true, true, true));
+const brandOption = computed(() => lineBar(concentration("brand"), "销量", "销量占比", "新品销量", true, false, true, true));
+const sellerOption = computed(() => lineBar(concentration("seller"), "销量", "销量占比", "新品销量", true, false, true, true));
 const salesTrendOption = computed<EChartsOption>(() => ({
   grid:{ left:50,right:56,top:28,bottom:44,containLabel:true },
   tooltip:{
@@ -731,7 +767,17 @@ const salesTrendOption = computed<EChartsOption>(() => ({
   ],
 }));
 const sellerTypePoints = computed(() => byField("sellertype", 8));
-const sellerTypeShareOption = computed<EChartsOption>(() => ({ grid:{ left:68,right:18,top:24,bottom:24,containLabel:true }, tooltip:{ trigger:"axis", axisPointer:{ type:"shadow" } }, legend:{ top:0, data:["ASIN数量占比","月销量占比"] }, xAxis:{ type:"value", max:100, axisLabel:{ formatter:"{value}%" } }, yAxis:{ type:"category", data:sellerTypePoints.value.map(i=>i.label) }, series:[{ name:"ASIN数量占比", type:"bar", data:sellerTypePoints.value.map(i=>Number(((i.count/Math.max(snapshotRows.value.length,1))*100).toFixed(2))), itemStyle:{ color:"#f59e0b" } }, { name:"月销量占比", type:"bar", data:sellerTypePoints.value.map(i=>Number((i.share*100).toFixed(2))), itemStyle:{ color:"#84cc16" } }] }));
+const sellerTypeShareOption = computed<EChartsOption>(() => ({
+  grid:{ left:68,right:18,top:24,bottom:24,containLabel:true },
+  tooltip:{ trigger:"axis", axisPointer:{ type:"shadow" } },
+  legend:{ top:0, data:["ASIN数量占比","月销量占比"] },
+  xAxis:{ type:"value", max:100, axisLabel:{ formatter:"{value}%" } },
+  yAxis:{ type:"category", data:sellerTypePoints.value.map(i=>i.label) },
+  series:[
+    { name:"ASIN数量占比", type:"bar", data:sellerTypePoints.value.map(i=>Number(((i.count/Math.max(snapshotRows.value.length,1))*100).toFixed(2))), itemStyle:{ color:"#f59e0b" } },
+    { name:"月销量占比", type:"bar", data:sellerTypePoints.value.map(i=>Number((i.share*100).toFixed(2))), itemStyle:{ color:"#84cc16" } },
+  ],
+}));
 const sellerTypeQualityOption = computed<EChartsOption>(() => {
   const points = sellerTypePoints.value.map(i => {
     const rows = snapshotRows.value.filter(r => (t(r.sellertype)||"未知") === i.label);
@@ -773,11 +819,23 @@ const sellerTypeQualityOption = computed<EChartsOption>(() => {
     ],
   };
 });
-const sellerNationOption = computed(() => lineBar(byField("sellernation", 10), "产品数量", "销量占比", undefined, false, false, false, false, "count"));
-const listingAgeOption = computed(() => lineBar(bucket(snapshotRows.value, r => n(r.availabledays), [0,30,90,180,365,730,1095,999999], ["1个月内","1-3个月","3-6个月","6-12个月","1-2年","2-3年","3年以上"]), "产品数量", "销量占比", undefined, false, false, false, false, "count"));
-const listingTrendOption = computed(() => { const total = metric.value.units || 0, map = new Map<string, Dist>(); snapshotRows.value.forEach(r => { const label = dateMs(r) ? String(new Date(dateMs(r)!).getFullYear()) : "未知", cur = map.get(label) || { label, count:0, units:0, share:0 }; cur.count += 1; cur.units += n(r.totalunits) || 0; map.set(label, cur); }); return lineBar([...map.values()].sort((a,b)=>a.label.localeCompare(b.label)).map(i => ({ ...i, share: total ? i.units/total : 0 })), "产品数量", "销量占比", undefined, false, false, false, false, "count"); });
-const reviewOption = computed(() => lineBar(bucket(snapshotRows.value, r => n(r.reviews), [0,1,50,100,200,300,500,999999], ["无评论数","1-50","50-100","100-200","200-300","300-500","500以上"]), "产品数量", "销量占比", undefined, false, false, false, false, "count"));
-const ratingOption = computed(() => lineBar(bucket(snapshotRows.value, r => n(r.rating), [0,2,3,3.5,4,4.3,4.5,5.1], ["2.0以下","2.0-3.0","3.0-3.5","3.5-4.0","4.0-4.3","4.3-4.5","4.5以上"]), "产品数量", "销量占比", undefined, false, false, false, false, "count"));
+const sellerNationPoints = computed(() =>
+  byField("sellernation", 10).map((item) => ({
+    ...item,
+    key: item.label,
+    name: sellerNationLabel(item.label),
+    label: sellerNationLabel(item.label),
+  })),
+);
+const sellerNationOption = computed(() => lineBar(sellerNationPoints.value, "产品数量", "销量占比", undefined, false, false, false, false, "count"));
+const listingAgePoints = computed(() => bucket(snapshotRows.value, r => n(r.availabledays), [0,30,90,180,365,730,1095,999999], ["1个月内","1-3个月","3-6个月","6-12个月","1-2年","2-3年","3年以上"]));
+const listingAgeOption = computed(() => lineBar(listingAgePoints.value, "产品数量", "销量占比", undefined, false, false, false, false, "count"));
+const listingTrendPoints = computed(() => { const total = metric.value.units || 0, map = new Map<string, Dist>(); snapshotRows.value.forEach(r => { const label = dateMs(r) ? String(new Date(dateMs(r)!).getFullYear()) : "未知", cur = map.get(label) || { label, count:0, units:0, share:0, rows: [] as Row[] }; cur.count += 1; cur.units += n(r.totalunits) || 0; cur.rows?.push(r); map.set(label, cur); }); return [...map.values()].sort((a,b)=>a.label.localeCompare(b.label)).map(i => ({ ...i, share: total ? i.units/total : 0 })); });
+const listingTrendOption = computed(() => lineBar(listingTrendPoints.value, "产品数量", "销量占比", undefined, false, false, false, false, "count"));
+const reviewPoints = computed(() => bucket(snapshotRows.value, r => n(r.reviews), [0,1,50,100,200,300,500,999999], ["无评论数","1-50","50-100","100-200","200-300","300-500","500以上"]));
+const reviewOption = computed(() => lineBar(reviewPoints.value, "产品数量", "销量占比", undefined, false, false, false, false, "count"));
+const ratingPoints = computed(() => bucket(snapshotRows.value, r => n(r.rating), [0,2,3,3.5,4,4.3,4.5,5.1], ["2.0以下","2.0-3.0","3.0-3.5","3.5-4.0","4.0-4.3","4.3-4.5","4.5以上"]));
+const ratingOption = computed(() => lineBar(ratingPoints.value, "产品数量", "销量占比", undefined, false, false, false, false, "count"));
 const priceBucketGroups = computed(() => {
   const rowsWithPrice = snapshotRows.value
     .map((row) => ({ row, price: n(row.price) }))
@@ -873,9 +931,72 @@ function openPriceBucketModal(params: unknown) {
   if (!target) return;
   priceBucketModal.value = {
     open: true,
+    title: "商品销量分布",
     label: target.label,
     rows: [...target.rows].sort((a, b) => (n(b.totalunits) || 0) - (n(a.totalunits) || 0)),
   };
+}
+function openAggregateBucketModal(mode: "brand" | "seller", params: unknown) {
+  const dataIndex = Number((params as { dataIndex?: number })?.dataIndex ?? -1);
+  if (dataIndex < 0) return;
+  const target = concentration(mode)[dataIndex];
+  if (!target?.name) return;
+  const rows = snapshotRows.value
+    .filter((row) => (mode === "brand" ? t(row.brand) : t(row.sellername)) === target.name)
+    .sort((a, b) => (n(b.totalunits) || 0) - (n(a.totalunits) || 0));
+  if (!rows.length) return;
+  priceBucketModal.value = {
+    open: true,
+    title: mode === "brand" ? "品牌商品销量分布" : "卖家商品销量分布",
+    label: target.name,
+    rows,
+  };
+}
+function openBrandBucketModal(params: unknown) {
+  openAggregateBucketModal("brand", params);
+}
+function openSellerBucketModal(params: unknown) {
+  openAggregateBucketModal("seller", params);
+}
+function openSellerNationBucketModal(params: unknown) {
+  const dataIndex = Number((params as { dataIndex?: number })?.dataIndex ?? -1);
+  if (dataIndex < 0) return;
+  const target = sellerNationPoints.value[dataIndex];
+  if (!target?.key) return;
+  const rows = snapshotRows.value
+    .filter((row) => (t(row.sellernation) || "未知") === target.key)
+    .sort((a, b) => (n(b.totalunits) || 0) - (n(a.totalunits) || 0));
+  priceBucketModal.value = {
+    open: true,
+    title: "属地商品销量分布",
+    label: target.label,
+    rows,
+  };
+}
+function openRowsBucketModal(title: string, points: Dist[], params: unknown) {
+  const dataIndex = Number((params as { dataIndex?: number })?.dataIndex ?? -1);
+  if (dataIndex < 0) return;
+  const target = points[dataIndex];
+  const rows = [...(target?.rows || [])].sort((a, b) => (n(b.totalunits) || 0) - (n(a.totalunits) || 0));
+  if (!target || !rows.length) return;
+  priceBucketModal.value = {
+    open: true,
+    title,
+    label: target.label,
+    rows,
+  };
+}
+function openListingAgeBucketModal(params: unknown) {
+  openRowsBucketModal("上架时间商品分布", listingAgePoints.value, params);
+}
+function openListingTrendBucketModal(params: unknown) {
+  openRowsBucketModal("上架趋势商品分布", listingTrendPoints.value, params);
+}
+function openReviewBucketModal(params: unknown) {
+  openRowsBucketModal("评论数商品分布", reviewPoints.value, params);
+}
+function openRatingBucketModal(params: unknown) {
+  openRowsBucketModal("评分值商品分布", ratingPoints.value, params);
 }
 function closePriceBucketModal() {
   priceBucketModal.value.open = false;
@@ -892,9 +1013,30 @@ function openPriceBucketAmazon(params: unknown) {
   if (!point?.asin) return;
   window.open(amazonUrl(point.asin), "_blank", "noopener,noreferrer");
 }
+function openProductAmazon(params: unknown) {
+  const dataIndex = Number((params as { dataIndex?: number })?.dataIndex ?? -1);
+  if (dataIndex < 0) return;
+  const point = concentration("product")[dataIndex];
+  const asin = point?.row ? t(point.row.asin) : "";
+  if (!asin) return;
+  window.open(amazonUrl(asin), "_blank", "noopener,noreferrer");
+}
 const exportReport = () => window.print();
 const goBack = () => router.push({ name:"competitors", query:{ year:selectedYear.value || undefined, month:selectedMonth.value || undefined } });
-onMounted(async () => { loading.value = true; error.value = ""; try { await loadAllRows(); if (!allRows.value.length) error.value = "没有可用于生成报告的竞品数据。"; if (!activeCategoryPath.value && categoryOptions.value.length) activeCategoryPath.value = categoryOptions.value[0].path; } catch (err) { console.error("load competitor report failed:", err); error.value = "报告生成失败，请稍后重试。"; } finally { loading.value = false; } });
+onMounted(async () => {
+  loading.value = true;
+  error.value = "";
+  try {
+    await loadAllRows();
+    if (!allRows.value.length) error.value = "没有可用于生成报告的竞品数据。";
+    if (!activeCategoryPath.value && categoryOptions.value.length) activeCategoryPath.value = categoryOptions.value[0].path;
+  } catch (err) {
+    console.error("load competitor report failed:", err);
+    error.value = "报告生成失败，请稍后重试。";
+  } finally {
+    loading.value = false;
+  }
+});
 </script>
 
 <style scoped>
@@ -1385,3 +1527,4 @@ onMounted(async () => { loading.value = true; error.value = ""; try { await load
   }
 }
 </style>
+

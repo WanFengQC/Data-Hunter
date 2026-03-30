@@ -15,6 +15,8 @@ export interface PgItemsResponse {
   total: number;
   page: number;
   page_size: number;
+  average_total_searches?: number | null;
+  average_label?: string | null;
 }
 
 export interface YearMonthsResponse {

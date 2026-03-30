@@ -530,7 +530,15 @@ def fetch_growth_top10_items(
 
     with pg_connect() as conn:
         if not _table_exists(conn, schema_name, table_name):
-            return {"columns": [], "items": [], "total": 0, "page": 1, "page_size": limit}
+            return {
+                "columns": [],
+                "items": [],
+                "total": 0,
+                "page": 1,
+                "page_size": limit,
+                "average_total_searches": None,
+                "average_label": "平均总搜索量",
+            }
 
         column_meta = _get_column_meta(conn, schema_name, table_name)
         columns = [row["column_name"] for row in column_meta]
@@ -559,10 +567,37 @@ def fetch_growth_top10_items(
             + order_sql
             + sql.SQL(" LIMIT %s")
         )
+        average_label = "当月平均总搜索量" if mode != "quarterly" else "当季平均总搜索量"
+        avg_where_sql = where_sql
+        avg_params = list(where_params)
+        if mode == "quarterly" and year is not None and month is not None:
+            quarter_start = ((month - 1) // 3) * 3 + 1
+            quarter_end = quarter_start + 2
+            avg_clauses: list[sql.SQL] = [
+                sql.SQL("year_month BETWEEN %s AND %s"),
+            ]
+            avg_params = [year * 100 + quarter_start, year * 100 + quarter_end]
+            text_clauses, text_params = _build_text_filter_clauses(
+                text_filters,
+                valid_columns,
+                column_types=column_types,
+            )
+            avg_clauses.extend(text_clauses)
+            avg_params.extend(text_params)
+            avg_where_sql = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(avg_clauses)
+
+        avg_query = (
+            sql.SQL("SELECT AVG(CAST(total_searches AS DOUBLE PRECISION)) AS avg_total_searches FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + avg_where_sql
+        )
 
         with conn.cursor() as cur:
             cur.execute(data_query, [*where_params, limit])
             rows = cur.fetchall()
+            cur.execute(avg_query, avg_params)
+            avg_row = cur.fetchone()
 
     items: list[dict[str, Any]] = []
     for row in rows:
@@ -571,12 +606,18 @@ def fetch_growth_top10_items(
             item[key] = _serialize_value(value)
         items.append(item)
 
+    avg_total_searches = None
+    if avg_row:
+        avg_total_searches = _serialize_value(avg_row.get("avg_total_searches"))
+
     return {
         "columns": columns,
         "items": items,
         "total": len(items),
         "page": 1,
         "page_size": limit,
+        "average_total_searches": avg_total_searches,
+        "average_label": average_label,
     }
 
 
