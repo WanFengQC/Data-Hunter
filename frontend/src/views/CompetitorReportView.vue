@@ -219,7 +219,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { EChartsOption } from "echarts";
 import ReportChart from "@/components/ReportChart.vue";
-import { fetchPgItems } from "@/api/data";
+import { fetchPgAllItems } from "@/api/data";
 
 type Row = Record<string, unknown>;
 type Metric = { label: string; value: string };
@@ -230,6 +230,26 @@ type CategoryOption = { path: string; locale: string };
 const CATEGORY_TEDDY = "Toys & Games:Stuffed Animals & Plush Toys:Stuffed Animals & Teddy Bears";
 const CATEGORY_PILLOWS = "Toys & Games:Stuffed Animals & Plush Toys:Plush Pillows";
 const CATEGORY_ALL = "ALL";
+const REPORT_COLUMNS = [
+  "asin",
+  "availabledate",
+  "availabledays",
+  "brand",
+  "bsrrank",
+  "imageurl",
+  "nodelabelpath",
+  "price",
+  "rating",
+  "reviews",
+  "sellername",
+  "sellernation",
+  "sellertype",
+  "title",
+  "totalamount",
+  "totalunits",
+  "variants",
+  "year_month",
+];
 const SELLER_NATION_ZH: Record<string, string> = {
   US: "美国",
   CN: "中国",
@@ -905,7 +925,16 @@ const priceOption = computed(() =>
     "count",
   ),
 );
-async function loadAllRows() { const items: Row[] = []; let page = 1, total = 0; do { loadingText.value = total ? `正在读取历史数据... ${items.length} / ${total}` : "正在读取竞品数据..."; const data = await fetchPgItems({ table:"seller_sprite_competitor_items", page, pageSize:1000, sortBy:"year_month", sortDir:"asc" }); items.push(...(data.items || [])); total = Number(data.total || 0); page += 1; if (!data.items?.length) break; } while (items.length < total); allRows.value = items; }
+async function loadAllRows() {
+  loadingText.value = "正在读取竞品数据...";
+  const data = await fetchPgAllItems({
+    table: "seller_sprite_competitor_items",
+    sortBy: "year_month",
+    sortDir: "asc",
+    columns: REPORT_COLUMNS,
+  });
+  allRows.value = data.items || [];
+}
 function selectCategory(path: string) { activeCategoryPath.value = path; }
 function updateReportQuery(nextYear: number, nextMonth: number) {
   if (nextYear === selectedYear.value && nextMonth === selectedMonth.value) return;

@@ -1,5 +1,6 @@
 import apiClient from "@/api/client";
 import type {
+  PgAllItemsResponse,
   PgFilterOption,
   PgFilterOptionsResponse,
   PgItemsResponse,
@@ -92,6 +93,41 @@ export async function fetchPgItems(params: {
 
   const { data } = await apiClient.get<PgItemsResponse>("/pg/items", {
     params: payload,
+  });
+  return data;
+}
+
+export async function fetchPgAllItems(params: {
+  year?: number;
+  month?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  textFilters?: Record<string, unknown>;
+  valueFilters?: Record<string, string[]>;
+  table?: string;
+  columns?: string[];
+}): Promise<PgAllItemsResponse> {
+  const payload: Record<string, unknown> = {
+    year: params.year,
+    month: params.month,
+    sort_by: params.sortBy,
+    sort_dir: params.sortDir,
+    table: params.table,
+  };
+
+  if (params.textFilters && Object.keys(params.textFilters).length > 0) {
+    payload.text_filters = JSON.stringify(params.textFilters);
+  }
+  if (params.valueFilters && Object.keys(params.valueFilters).length > 0) {
+    payload.value_filters = JSON.stringify(params.valueFilters);
+  }
+  if (params.columns && params.columns.length > 0) {
+    payload.columns = params.columns.join(",");
+  }
+
+  const { data } = await apiClient.get<PgAllItemsResponse>("/pg/items-all", {
+    params: payload,
+    timeout: 0,
   });
   return data;
 }

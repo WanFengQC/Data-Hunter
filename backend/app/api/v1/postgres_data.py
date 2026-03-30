@@ -10,6 +10,7 @@ from app.services.export_jobs import pg_export_jobs
 from app.services.postgres_table import (
     fetch_asin_aba_history,
     fetch_asin_detail,
+    fetch_all_items,
     fetch_filter_options,
     fetch_growth_top10_items,
     fetch_items,
@@ -57,6 +58,14 @@ def _parse_value_filters(raw: str | None) -> dict[str, list[str]]:
         if isinstance(value, list):
             output[str(key)] = [str(v) for v in value]
     return output
+
+
+def _parse_columns(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    columns = [part.strip() for part in str(raw).split(",")]
+    cleaned = [column for column in columns if column]
+    return cleaned or None
 
 
 @router.get("/year-months")
@@ -291,6 +300,44 @@ def list_pg_items(
             value_filters=parsed_value_filters,
         )
         return result
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid filters JSON: {exc}") from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/items-all")
+def list_all_pg_items(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    sort_by: str | None = Query(default=None),
+    sort_dir: str = Query(default="desc"),
+    filters: str | None = Query(default=None),
+    text_filters: str | None = Query(default=None),
+    value_filters: str | None = Query(default=None),
+    columns: str | None = Query(default=None),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default=settings.pg_table),
+) -> dict:
+    try:
+        merged_text_filters: dict[str, Any] = {}
+        merged_text_filters.update(_parse_text_filters(filters))
+        merged_text_filters.update(_parse_text_filters(text_filters))
+
+        parsed_value_filters = _parse_value_filters(value_filters)
+        parsed_columns = _parse_columns(columns)
+
+        return fetch_all_items(
+            schema_name=schema,
+            table_name=table,
+            year=year,
+            month=month,
+            sort_by=sort_by,
+            sort_dir=sort_dir.lower(),
+            text_filters=merged_text_filters,
+            value_filters=parsed_value_filters,
+            selected_columns=parsed_columns,
+        )
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid filters JSON: {exc}") from exc
     except Exception as exc:  # pragma: no cover

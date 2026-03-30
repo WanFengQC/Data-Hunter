@@ -19,6 +19,12 @@ export interface PgItemsResponse {
   average_label?: string | null;
 }
 
+export interface PgAllItemsResponse {
+  columns: string[];
+  items: Record<string, unknown>[];
+  total: number;
+}
+
 export interface YearMonthsResponse {
   items: number[];
 }

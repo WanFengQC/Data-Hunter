@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +25,8 @@ NUMERIC_COLUMN_TYPES = {
     "real",
     "double precision",
 }
+_TABLE_PROFILE_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_TABLE_PROFILE_LOCK = Lock()
 
 
 def pg_connect() -> psycopg.Connection:
@@ -35,6 +38,62 @@ def pg_connect() -> psycopg.Connection:
         dbname=settings.pg_db,
         row_factory=dict_row,
     )
+
+
+def _build_table_profile(
+    conn: psycopg.Connection, schema_name: str, table_name: str
+) -> dict[str, Any]:
+    exists = _table_exists(conn, schema_name, table_name)
+    if not exists:
+        return {
+            "exists": False,
+            "column_meta": [],
+            "columns": [],
+            "column_types": {},
+            "valid_columns": set(),
+        }
+
+    column_meta = _get_column_meta(conn, schema_name, table_name)
+    columns = [row["column_name"] for row in column_meta]
+    return {
+        "exists": True,
+        "column_meta": column_meta,
+        "columns": columns,
+        "column_types": {row["column_name"]: row["data_type"] for row in column_meta},
+        "valid_columns": set(columns),
+    }
+
+
+def _get_table_profile(conn: psycopg.Connection, schema_name: str, table_name: str) -> dict[str, Any]:
+    key = (schema_name, table_name)
+    with _TABLE_PROFILE_LOCK:
+        cached = _TABLE_PROFILE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    profile = _build_table_profile(conn, schema_name, table_name)
+    if profile["exists"]:
+        with _TABLE_PROFILE_LOCK:
+            _TABLE_PROFILE_CACHE[key] = profile
+    return profile
+
+
+def _resolve_selected_columns(
+    selected_columns: list[str] | None,
+    columns: list[str],
+    valid_columns: set[str],
+) -> list[str]:
+    if not selected_columns:
+        return columns
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for column in selected_columns:
+        if column not in valid_columns or column in seen:
+            continue
+        resolved.append(column)
+        seen.add(column)
+    return resolved
 
 
 def _serialize_value(value: Any) -> Any:
@@ -328,7 +387,8 @@ def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
     ).format(sql.Identifier(schema_name), sql.Identifier(table_name))
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return []
         with conn.cursor() as cur:
             cur.execute(query)
@@ -351,12 +411,12 @@ def fetch_filter_options(
     limit = min(max(limit, 10), 20000)
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return []
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
-        valid_columns = {row["column_name"] for row in column_meta}
+        column_types = profile["column_types"]
+        valid_columns = profile["valid_columns"]
         if column not in valid_columns:
             return []
 
@@ -436,13 +496,13 @@ def fetch_items(
         merged_text_filters.update(text_filters)
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return {"columns": [], "items": [], "total": 0, "page": page, "page_size": page_size}
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = [row["column_name"] for row in column_meta]
-        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
-        valid_columns = set(columns)
+        columns = profile["columns"]
+        column_types = profile["column_types"]
+        valid_columns = profile["valid_columns"]
 
         where_sql, where_params = _build_where_sql(
             year=year,
@@ -529,7 +589,8 @@ def fetch_growth_top10_items(
         text_filters["total_searches"] = range_filter
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return {
                 "columns": [],
                 "items": [],
@@ -540,10 +601,9 @@ def fetch_growth_top10_items(
                 "average_label": "平均总搜索量",
             }
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = [row["column_name"] for row in column_meta]
-        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
-        valid_columns = set(columns)
+        columns = profile["columns"]
+        column_types = profile["column_types"]
+        valid_columns = profile["valid_columns"]
 
         where_sql, where_params = _build_where_sql(
             year=year,
@@ -631,6 +691,7 @@ def fetch_all_items(
     filters: dict[str, Any] | None = None,  # backward-compatible alias
     text_filters: dict[str, Any] | None = None,
     value_filters: dict[str, list[str]] | None = None,
+    selected_columns: list[str] | None = None,
 ) -> dict[str, Any]:
     merged_text_filters: dict[str, Any] = {}
     if filters:
@@ -639,13 +700,16 @@ def fetch_all_items(
         merged_text_filters.update(text_filters)
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return {"columns": [], "items": [], "total": 0}
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = [row["column_name"] for row in column_meta]
-        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
-        valid_columns = set(columns)
+        columns = profile["columns"]
+        column_types = profile["column_types"]
+        valid_columns = profile["valid_columns"]
+        output_columns = _resolve_selected_columns(selected_columns, columns, valid_columns)
+        if not output_columns:
+            return {"columns": [], "items": [], "total": 0}
 
         where_sql, where_params = _build_where_sql(
             year=year,
@@ -662,14 +726,9 @@ def fetch_all_items(
             column_types=column_types,
         )
 
-        count_query = (
-            sql.SQL("SELECT COUNT(*) AS total FROM {}.{}").format(
-                sql.Identifier(schema_name), sql.Identifier(table_name)
-            )
-            + where_sql
-        )
         data_query = (
-            sql.SQL("SELECT * FROM {}.{}").format(
+            sql.SQL("SELECT {} FROM {}.{}").format(
+                sql.SQL(", ").join(sql.Identifier(col) for col in output_columns),
                 sql.Identifier(schema_name), sql.Identifier(table_name)
             )
             + where_sql
@@ -677,8 +736,6 @@ def fetch_all_items(
         )
 
         with conn.cursor() as cur:
-            cur.execute(count_query, where_params)
-            total = int(cur.fetchone()["total"])
             cur.execute(data_query, where_params)
             rows = cur.fetchall()
 
@@ -689,7 +746,7 @@ def fetch_all_items(
             item[key] = _serialize_value(value)
         items.append(item)
 
-    return {"columns": columns, "items": items, "total": total}
+    return {"columns": output_columns, "items": items, "total": len(items)}
 
 
 def stream_items_csv(
@@ -723,15 +780,15 @@ def stream_items_csv(
         return data
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             writer.writerow([])
             yield flush_buffer()
             return
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = [row["column_name"] for row in column_meta]
-        column_types = {row["column_name"]: row["data_type"] for row in column_meta}
-        valid_columns = set(columns)
+        columns = profile["columns"]
+        column_types = profile["column_types"]
+        valid_columns = profile["valid_columns"]
 
         where_sql, where_params = _build_where_sql(
             year=year,
@@ -810,11 +867,9 @@ def fetch_word_frequency_trend(
     latest_year_month: int | None = None
 
     with pg_connect() as conn:
-        has_freq_table = _table_exists(conn, schema_name, freq_table_name)
-        if has_freq_table:
-            freq_columns = {
-                row["column_name"] for row in _get_column_meta(conn, schema_name, freq_table_name)
-            }
+        freq_profile = _get_table_profile(conn, schema_name, freq_table_name)
+        if freq_profile["exists"]:
+            freq_columns = freq_profile["valid_columns"]
             has_word_zh = "word_zh" in freq_columns
             has_tag = "标签" in freq_columns
             has_reason = "原因" in freq_columns
@@ -899,10 +954,9 @@ def fetch_word_frequency_trend(
                         "plushable_bool": None,
                     }
 
-        if _table_exists(conn, schema_name, cache_table_name):
-            cache_columns = {
-                row["column_name"] for row in _get_column_meta(conn, schema_name, cache_table_name)
-            }
+        cache_profile = _get_table_profile(conn, schema_name, cache_table_name)
+        if cache_profile["exists"]:
+            cache_columns = cache_profile["valid_columns"]
             cache_select: list[sql.SQL] = [
                 sql.SQL("translation_zh")
                 if "translation_zh" in cache_columns
@@ -1076,11 +1130,11 @@ def fetch_asin_aba_history(
         return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = {row["column_name"] for row in column_meta}
+        columns = profile["valid_columns"]
         if "keyword" not in columns or "top3asindtolist" not in columns or "year_month" not in columns:
             return {"keyword": keyword_norm, "asin": asin_norm, "count": 0, "items": []}
 
@@ -1145,11 +1199,11 @@ def fetch_asin_detail(
         return {"asin": "", "found": False, "detail": None}
 
     with pg_connect() as conn:
-        if not _table_exists(conn, schema_name, table_name):
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
             return {"asin": asin_norm, "found": False, "detail": None}
 
-        column_meta = _get_column_meta(conn, schema_name, table_name)
-        columns = {row["column_name"] for row in column_meta}
+        columns = profile["valid_columns"]
         required_columns = {"year_month", "keyword", "gkdatas"}
         if not required_columns.issubset(columns):
             return {"asin": asin_norm, "found": False, "detail": None}

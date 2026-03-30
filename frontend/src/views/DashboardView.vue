@@ -8,7 +8,7 @@
             v-model.trim="wordSearchInput"
             class="word-trend-input"
             type="text"
-            placeholder="输入单词，如 car"
+            placeholder="输入主词，空格/逗号后自动作为对比词，如 car truck"
             @keydown.enter.prevent="searchWordTrend"
           />
           <button
@@ -190,7 +190,7 @@
                   <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
                 </template>
                 <template v-else>
-                  {{ formatCell(getCell(row, col), col) }}
+                  {{ formatCell(getCell(row, col), col, row) }}
                 </template>
               </td>
             </tr>
@@ -293,9 +293,9 @@
               <td
                 v-for="col in growthTop10Columns"
                 :key="`growth-top10-${idx}-${col}`"
-                :title="cellToText(getCell(row, col))"
+                :title="cellToText(resolveDisplayValue(getCell(row, col), col, row))"
               >
-                {{ formatCell(getCell(row, col), col) }}
+                {{ formatCell(getCell(row, col), col, row) }}
               </td>
             </tr>
           </tbody>
@@ -486,7 +486,7 @@
                   <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
                 </template>
                 <template v-else>
-                  {{ formatCell(getCell(row, col), col) }}
+                  {{ formatCell(getCell(row, col), col, row) }}
                 </template>
               </td>
             </tr>
@@ -642,7 +642,7 @@ const ABA_FIXED_COLUMNS = [
   "trends",
 ];
 const TOP10_VISIBLE_COLUMNS = [...ABA_FIXED_COLUMNS];
-const TOP10_PAGE_SIZE = 20;
+const TOP10_PAGE_SIZE = 10;
 const GROWTH_TOP10_VISIBLE_COLUMNS = [
   "word",
   "word_zh",
@@ -937,7 +937,9 @@ const displayColumns = computed(() => {
 const workingFilterSet = computed(() => new Set(workingFilterValues.value));
 const dragPreviewValues = computed(() => {
   if (!draggingCol.value) return [];
-  return tableRows.value.slice(0, 8).map((row) => formatCell(getCell(row, draggingCol.value), draggingCol.value));
+  return tableRows.value
+    .slice(0, 8)
+    .map((row) => formatCell(getCell(row, draggingCol.value), draggingCol.value, row));
 });
 
 const visibleFilterOptions = computed(() => filterOptions.value);
@@ -1545,7 +1547,40 @@ function cellToText(value: unknown): string {
   return String(value);
 }
 
-function formatCell(value: unknown, col?: string): string {
+function extractQuotedMeaning(reason: unknown): string {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) return "";
+
+  const patterns = [
+    /“([^”]+)”/g,
+    /"([^"]+)"/g,
+    /‘([^’]+)’/g,
+    /'([^']+)'/g,
+    /「([^」]+)」/g,
+    /『([^』]+)』/g,
+  ];
+
+  for (const pattern of patterns) {
+    const matches = Array.from(text.matchAll(pattern))
+      .map((match) => String(match[1] || "").trim())
+      .filter(Boolean);
+    const chineseMatch = matches.find((item) => /[\u4e00-\u9fff]/.test(item));
+    if (chineseMatch) return chineseMatch;
+    if (matches.length) return matches[0];
+  }
+
+  return "";
+}
+
+function resolveDisplayValue(value: unknown, col?: string, row?: Record<string, unknown>): unknown {
+  if (col === "word_zh" && row) {
+    const preferred = extractQuotedMeaning(row["原因"]);
+    if (preferred) return preferred;
+  }
+  return value;
+}
+
+function formatCell(value: unknown, col?: string, row?: Record<string, unknown>): string {
   if (
     col === "w4rankgrowthrate" ||
     col === "total_searches_growth_rate" ||
@@ -1553,7 +1588,7 @@ function formatCell(value: unknown, col?: string): string {
   ) {
     return formatPercent(toNumber(value));
   }
-  const text = cellToText(value);
+  const text = cellToText(resolveDisplayValue(value, col, row));
   return text.length > 80 ? `${text.slice(0, 80)}...` : text;
 }
 
@@ -1954,9 +1989,65 @@ function onFullscreenChange(): void {
   scheduleLazyLoadCheck();
 }
 
+function parseCommaSeparatedWords(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,\s，]+/)
+        .map((part) => part.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function appendCompareTrendWords(words: string[], baseWord: string): Promise<void> {
+  const existing = new Set(compareTrendResults.value.map((item) => item.word.toLowerCase()));
+  const filteredWords = words.filter((item) => item !== baseWord && !existing.has(item));
+  if (!filteredWords.length) {
+    compareTrendError.value = "输入词已存在或与主词相同";
+    return;
+  }
+
+  compareTrendLoading.value = true;
+  compareTrendError.value = "";
+  try {
+    const settled = await Promise.allSettled(filteredWords.map((item) => fetchWordFrequencyTrend(item)));
+    const appended: WordFrequencyTrendResponse[] = [];
+    const failed: string[] = [];
+    for (let i = 0; i < settled.length; i += 1) {
+      const result = settled[i];
+      const word = filteredWords[i];
+      if (result.status === "fulfilled") {
+        appended.push(result.value);
+      } else {
+        failed.push(word);
+      }
+    }
+    if (appended.length) {
+      compareTrendResults.value = [...compareTrendResults.value, ...appended];
+      compareWordInput.value = "";
+      await Promise.allSettled(
+        appended.map((item) => fetchKeywordTop10(item.word, item.latest_year_month ?? null))
+      );
+    }
+    if (failed.length) {
+      compareTrendError.value = `以下词查询失败: ${failed.join(", ")}`;
+    }
+  } catch (error) {
+    console.error("appendCompareTrendWords failed:", error);
+    compareTrendError.value = "对比查询失败，请稍后重试";
+  } finally {
+    compareTrendLoading.value = false;
+  }
+}
+
 async function searchWordTrend(): Promise<void> {
-  const word = wordSearchInput.value.trim().toLowerCase();
-  if (!word) return;
+  const rawInput = wordSearchInput.value.trim().toLowerCase();
+  if (!rawInput) return;
+
+  const words = parseCommaSeparatedWords(rawInput);
+  if (!words.length) return;
+  const [word, ...compareWords] = words;
   hasKeywordSearchTriggered.value = true;
   wordTrendLoading.value = true;
   wordTrendError.value = "";
@@ -1972,6 +2063,9 @@ async function searchWordTrend(): Promise<void> {
     if (mainWord) {
       activeTop10Word.value = mainWord;
       await fetchKeywordTop10(mainWord, data.latest_year_month ?? null);
+      if (compareWords.length) {
+        await appendCompareTrendWords(compareWords, mainWord);
+      }
     }
   } catch (error) {
     console.error("searchWordTrend failed:", error);
@@ -2007,44 +2101,7 @@ async function searchCompareTrend(): Promise<void> {
     compareTrendError.value = "请输入有效对比词";
     return;
   }
-  const existing = new Set(compareTrendResults.value.map((item) => item.word.toLowerCase()));
-  const words = inputWords.filter((item) => item !== baseWord && !existing.has(item));
-  if (!words.length) {
-    compareTrendError.value = "输入词已存在或与主词相同";
-    return;
-  }
-
-  compareTrendLoading.value = true;
-  compareTrendError.value = "";
-  try {
-    const settled = await Promise.allSettled(words.map((item) => fetchWordFrequencyTrend(item)));
-    const appended: WordFrequencyTrendResponse[] = [];
-    const failed: string[] = [];
-    for (let i = 0; i < settled.length; i += 1) {
-      const result = settled[i];
-      const word = words[i];
-      if (result.status === "fulfilled") {
-        appended.push(result.value);
-      } else {
-        failed.push(word);
-      }
-    }
-    if (appended.length) {
-      compareTrendResults.value = [...compareTrendResults.value, ...appended];
-      compareWordInput.value = "";
-      await Promise.allSettled(
-        appended.map((item) => fetchKeywordTop10(item.word, item.latest_year_month ?? null))
-      );
-    }
-    if (failed.length) {
-      compareTrendError.value = `以下词查询失败: ${failed.join(", ")}`;
-    }
-  } catch (error) {
-    console.error("searchCompareTrend failed:", error);
-    compareTrendError.value = "对比查询失败，请稍后重试";
-  } finally {
-    compareTrendLoading.value = false;
-  }
+  await appendCompareTrendWords(inputWords, baseWord);
 }
 
 function clearCompareTrend(): void {
