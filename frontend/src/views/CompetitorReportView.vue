@@ -654,7 +654,7 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
         return lines.join("");
       }
       if (point) {
-        lines.push(`<div>销量: ${formatInteger(point.units || 0)}</div>`);
+        lines.push(`<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;margin-right:6px;vertical-align:middle;"></span>销量: ${formatInteger(point.units || 0)}</div>`);
       }
       seriesList.forEach((item, index) => {
         let displayValue = item.value;
@@ -792,6 +792,17 @@ const sellerTypeQualityOption = computed<EChartsOption>(() => {
         const x = Math.max(12, pos[0] - size.contentSize[0] / 2);
         const y = Math.max(12, pos[1] - size.contentSize[1] - 14);
         return [x, y];
+      },
+      formatter: (params) => {
+        const seriesList = Array.isArray(params) ? params : [params];
+        const label = String(seriesList[0]?.axisValueLabel || seriesList[0]?.name || "-");
+        const reviewCount = Number(seriesList.find((item) => item.seriesName === "平均评分数")?.value ?? 0);
+        const ratingValue = Number(seriesList.find((item) => item.seriesName === "平均评分值")?.value ?? 0);
+        return [
+          `<div>${label}</div>`,
+          `<div>${seriesList.find((item) => item.seriesName === "平均评分数")?.marker || ""}平均评分数 ${reviewCount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>`,
+          `<div>${seriesList.find((item) => item.seriesName === "平均评分值")?.marker || ""}平均评分值 ${ratingValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>`,
+        ].join("");
       },
     },
     legend:{ top:0, data:["平均评分数","平均评分值"] },
