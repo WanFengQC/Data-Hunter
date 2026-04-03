@@ -4,7 +4,18 @@
       <div class="trend-modal-card">
         <div class="trend-modal-header">
           <div class="trend-modal-title">{{ title || "趋势数据" }}</div>
-          <button class="trend-modal-close" type="button" @click="emitClose">关闭</button>
+          <div class="trend-modal-actions">
+            <a
+              v-if="googleTrendsUrl"
+              class="trend-modal-link"
+              :href="googleTrendsUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Google Trends
+            </a>
+            <button class="trend-modal-close" type="button" @click="emitClose">关闭</button>
+          </div>
         </div>
         <div ref="chartRef" class="trend-modal-chart" />
       </div>
@@ -14,7 +25,7 @@
 
 <script setup lang="ts">
 import * as echarts from "echarts";
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import type { PgTrendPoint } from "@/types/data";
 import { formatTrendLabel } from "@/utils/trend";
@@ -23,6 +34,7 @@ const props = defineProps<{
   open: boolean;
   title: string;
   points: PgTrendPoint[];
+  query?: string;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +43,11 @@ const emit = defineEmits<{
 
 const chartRef = ref<HTMLElement | null>(null);
 let chart: echarts.ECharts | null = null;
+const googleTrendsUrl = computed(() => {
+  const query = String(props.query || "").trim();
+  if (!query) return "";
+  return `https://trends.google.com/trends/explore?date=today%205-y&geo=US&q=${encodeURIComponent(query)}`;
+});
 
 function emitClose(): void {
   emit("close");
@@ -186,6 +203,13 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+.trend-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trend-modal-link,
 .trend-modal-close {
   flex: 0 0 auto;
   display: inline-flex;
@@ -201,6 +225,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   line-height: 1;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .trend-modal-chart {

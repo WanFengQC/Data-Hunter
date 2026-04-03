@@ -365,6 +365,7 @@
       :open="trendModalOpen"
       :title="trendModalTitle"
       :points="trendModalPoints"
+      :query="trendModalQuery"
       @close="trendModalOpen = false"
     />
 
@@ -499,6 +500,7 @@ const workingFilterValues = ref<string[]>([]);
 const trendModalOpen = ref(false);
 const trendModalTitle = ref("");
 const trendModalPoints = ref<PgTrendPoint[]>([]);
+const trendModalQuery = ref("");
 const copyToast = ref("");
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -727,6 +729,7 @@ function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoin
   const title = String(row.title ?? row.asin ?? "").trim();
   trendModalTitle.value = title ? `${title} 趋势数据` : "趋势数据";
   trendModalPoints.value = points;
+  trendModalQuery.value = String(row.keyword ?? row.word ?? row.title ?? row.asin ?? "").trim();
   trendModalOpen.value = true;
 }
 
@@ -892,7 +895,13 @@ function onGlobalPointerUp(): void {
 }
 
 async function loadYearMonths(): Promise<void> {
-  yearMonthOptions.value = await fetchPgYearMonthsByTable(TARGET_TABLE);
+  try {
+    yearMonthOptions.value = await fetchPgYearMonthsByTable(TARGET_TABLE);
+  } catch (err) {
+    console.error("loadYearMonths failed:", err);
+    yearMonthOptions.value = [];
+    error.value = "年月筛选加载失败，请稍后重试";
+  }
 }
 
 async function loadTable(options: { append?: boolean } = {}): Promise<void> {

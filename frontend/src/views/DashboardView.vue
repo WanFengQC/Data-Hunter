@@ -267,7 +267,16 @@
           </div>
           <label v-if="growthTop10AverageText" class="growth-top10-average-field">
             平均总搜索量
-            <div class="growth-top10-average">{{ growthTop10AverageValueText }}</div>
+            <button
+              type="button"
+              class="growth-top10-average growth-top10-average-btn"
+              :disabled="!growthTop10AverageValueText"
+              :aria-label="growthTop10AverageCopied ? '平均总搜索量已复制' : '点击复制平均总搜索量'"
+              :title="growthTop10AverageCopied ? '已复制' : '点击复制'"
+              @click="copyGrowthTop10Average"
+            >
+              {{ growthTop10AverageValueText }}
+            </button>
           </label>
         </div>
       </div>
@@ -293,9 +302,15 @@
               <td
                 v-for="col in growthTop10Columns"
                 :key="`growth-top10-${idx}-${col}`"
-                :title="cellToText(resolveDisplayValue(getCell(row, col), col, row))"
+                :title="col === 'trends' ? '' : cellToText(resolveDisplayValue(getCell(row, col), col, row))"
+                :class="{ 'trend-cell': col === 'trends' }"
               >
-                {{ formatCell(getCell(row, col), col, row) }}
+                <template v-if="col === 'trends'">
+                  <TableTrendMiniChart :raw-trend="getCell(row, col)" @open="openTrendModalFromRow(row, $event)" />
+                </template>
+                <template v-else>
+                  {{ formatCell(getCell(row, col), col, row) }}
+                </template>
               </td>
             </tr>
           </tbody>
@@ -374,7 +389,7 @@
 
       <div
         class="table-wrap"
-        :class="{ 'is-loading': tableLoading }"
+        :class="{ 'is-loading': tableBusy }"
         ref="tableWrapRef"
         @scroll.passive="onTableWrapScroll"
       >
@@ -425,6 +440,7 @@
                 :class="{
                   'drag-source-col': dragGhost.active && draggingCol === col,
                   'top3-cell': col === 'top3asindtolist' || col === 'top3brands',
+                  'reason-cell': col === '原因' || col === 'tag_reason',
                   'trend-cell': col === 'trends',
                 }"
               >
@@ -499,9 +515,9 @@
           :style="{ left: `${insertLineLeft}px` }"
         />
 
-        <div v-if="tableLoading" class="table-loading-mask" aria-live="polite" aria-busy="true">
+        <div v-if="tableBusy" class="table-loading-mask" aria-live="polite" aria-busy="true">
           <span class="table-loading-spinner" />
-          <span class="table-loading-text">加载中...</span>
+          <span class="table-loading-text">正在加载 {{ currentTableTitle }}...</span>
         </div>
       </div>
 
@@ -596,6 +612,7 @@
       :open="trendModalOpen"
       :title="trendModalTitle"
       :points="trendModalPoints"
+      :query="trendModalQuery"
       @close="trendModalOpen = false"
     />
   </main>
@@ -641,6 +658,18 @@ const ABA_FIXED_COLUMNS = [
   "top3asindtolist",
   "trends",
 ];
+const WORD_FIXED_COLUMNS = [
+  "word",
+  "word_zh",
+  "pos",
+  "标签",
+  "原因",
+  "freq",
+  "total_searches",
+  "total_searches_growth_rate",
+  "total_searches_quarter_avg_growth_rate",
+  "trends",
+];
 const TOP10_VISIBLE_COLUMNS = [...ABA_FIXED_COLUMNS];
 const TOP10_PAGE_SIZE = 10;
 const GROWTH_TOP10_VISIBLE_COLUMNS = [
@@ -650,6 +679,7 @@ const GROWTH_TOP10_VISIBLE_COLUMNS = [
   "total_searches",
   "total_searches_growth_rate",
   "total_searches_quarter_avg_growth_rate",
+  "trends",
 ];
 type GrowthTop10Mode = "monthly" | "quarterly" | "searches";
 type TextFilterOp =
@@ -769,6 +799,7 @@ const exportLoading = ref(false);
 
 const tableLoading = ref(false);
 const tableLoadingMore = ref(false);
+const yearMonthLoading = ref(false);
 const currentTableMode = ref<DataTableMode>("aba");
 const tableColumns = ref<string[]>([]);
 const tableRows = ref<Record<string, unknown>[]>([]);
@@ -790,6 +821,7 @@ const compareTrendResults = ref<WordFrequencyTrendResponse[]>([]);
 const trendModalOpen = ref(false);
 const trendModalTitle = ref("");
 const trendModalPoints = ref<PgTrendPoint[]>([]);
+const trendModalQuery = ref("");
 type KeywordTop10State = {
   keyword: string;
   yearMonth: number | null;
@@ -816,6 +848,7 @@ const growthTop10SearchMin = ref<string | number>("");
 const growthTop10SearchMax = ref<string | number>("");
 const growthTop10AverageTotalSearches = ref<number | null>(null);
 const growthTop10AverageLabel = ref("平均总搜索量");
+const growthTop10AverageCopied = ref(false);
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -859,6 +892,7 @@ const workingFilterValues = ref<string[]>([]);
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
 let growthTop10FilterTimer: ReturnType<typeof setTimeout> | null = null;
+let growthTop10AverageCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 let activeTableRequestSeq = 0;
 let scrollCheckRaf = 0;
 let top10ScrollCheckRaf = 0;
@@ -900,6 +934,7 @@ const growthTop10MonthOptions = computed(() => {
 const currentTableMeta = computed(() => DATA_TABLES[currentTableMode.value]);
 const currentTableName = computed(() => currentTableMeta.value.tableName);
 const currentTableTitle = computed(() => currentTableMeta.value.title);
+const tableBusy = computed(() => tableLoading.value || yearMonthLoading.value);
 
 const excludedColumns = computed(() => {
   const base = new Set(BASE_EXCLUDED_COLUMNS);
@@ -922,7 +957,10 @@ const baseDisplayColumns = computed(() => {
     const availableSet = new Set(availableColumns.value);
     return ABA_FIXED_COLUMNS.filter((c) => availableSet.has(c));
   }
-  return availableColumns.value;
+  const availableSet = new Set(availableColumns.value);
+  const ordered = WORD_FIXED_COLUMNS.filter((c) => availableSet.has(c));
+  const missing = availableColumns.value.filter((c) => !ordered.includes(c));
+  return [...ordered, ...missing];
 });
 
 const displayColumns = computed(() => {
@@ -1003,12 +1041,60 @@ const growthTop10AverageValueText = computed(() => {
   if (growthTop10AverageTotalSearches.value === null || Number.isNaN(growthTop10AverageTotalSearches.value)) return "";
   return Math.round(growthTop10AverageTotalSearches.value).toLocaleString("en-US");
 });
+const growthTop10AverageCopyValue = computed(() => {
+  if (growthTop10AverageTotalSearches.value === null || Number.isNaN(growthTop10AverageTotalSearches.value)) return "";
+  return String(Math.round(growthTop10AverageTotalSearches.value));
+});
 const filterRuleNeedsValue = computed(
   () => filterTextRule.value.op !== "is_blank" && filterTextRule.value.op !== "is_not_blank"
 );
 
 function columnLabel(col: string): string {
   return FIELD_LABELS[col] || col;
+}
+
+async function writeTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fallback below.
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+async function copyGrowthTop10Average(): Promise<void> {
+  const value = growthTop10AverageCopyValue.value;
+  if (!value) return;
+  const copied = await writeTextToClipboard(value);
+  if (!copied) {
+    console.error("copyGrowthTop10Average failed");
+    return;
+  }
+  growthTop10AverageCopied.value = true;
+  if (growthTop10AverageCopiedTimer) clearTimeout(growthTop10AverageCopiedTimer);
+  growthTop10AverageCopiedTimer = setTimeout(() => {
+    growthTop10AverageCopied.value = false;
+    growthTop10AverageCopiedTimer = null;
+  }, 1200);
 }
 
 function syncOrderedColumnsState(): void {
@@ -1144,15 +1230,20 @@ function onGlobalPointerUp(): void {
 }
 
 async function initYearMonthFilters(): Promise<void> {
-  yearMonths.value = await fetchPgYearMonthsByTable(currentTableName.value);
-  if (!yearMonths.value.length) {
-    selectedYear.value = 0;
-    selectedMonth.value = 0;
-    return;
+  yearMonthLoading.value = true;
+  try {
+    yearMonths.value = await fetchPgYearMonthsByTable(currentTableName.value);
+    if (!yearMonths.value.length) {
+      selectedYear.value = 0;
+      selectedMonth.value = 0;
+      return;
+    }
+    const latest = yearMonths.value[0];
+    selectedYear.value = Math.floor(latest / 100);
+    selectedMonth.value = latest % 100;
+  } finally {
+    yearMonthLoading.value = false;
   }
-  const latest = yearMonths.value[0];
-  selectedYear.value = Math.floor(latest / 100);
-  selectedMonth.value = latest % 100;
 }
 
 async function initGrowthTop10Filters(): Promise<void> {
@@ -1601,6 +1692,7 @@ function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoin
   const keyword = String(row.keyword ?? row.word ?? "").trim();
   trendModalTitle.value = keyword ? `${keyword} 趋势数据` : "趋势数据";
   trendModalPoints.value = points;
+  trendModalQuery.value = keyword;
   trendModalOpen.value = true;
 }
 
@@ -2245,6 +2337,7 @@ onBeforeUnmount(() => {
   if (longPressTimer) clearTimeout(longPressTimer);
   if (filterTimer) clearTimeout(filterTimer);
   if (growthTop10FilterTimer) clearTimeout(growthTop10FilterTimer);
+  if (growthTop10AverageCopiedTimer) clearTimeout(growthTop10AverageCopiedTimer);
   clearDragState();
   cleanupDragHandlers();
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
@@ -2504,6 +2597,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.growth-top10-average-btn {
+  justify-content: flex-start;
+  min-width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.growth-top10-average-btn:disabled {
+  cursor: default;
+}
+
 .growth-top10-filters select,
 .growth-top10-filters input {
   width: 100px;
@@ -2599,6 +2703,16 @@ onBeforeUnmount(() => {
   white-space: normal !important;
   min-width: 280px;
   vertical-align: middle;
+}
+
+.reason-cell {
+  white-space: normal !important;
+  min-width: 320px;
+  max-width: 420px;
+  width: 420px;
+  line-height: 1.55;
+  vertical-align: top !important;
+  word-break: break-word;
 }
 
 .trend-cell {
@@ -2704,6 +2818,7 @@ onBeforeUnmount(() => {
   position: relative;
   overflow: auto;
   max-height: 62vh;
+  min-height: 240px;
   transition: filter 0.18s ease, opacity 0.18s ease;
 }
 

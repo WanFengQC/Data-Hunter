@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from threading import Lock
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ NUMERIC_COLUMN_TYPES = {
 }
 _TABLE_PROFILE_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _TABLE_PROFILE_LOCK = Lock()
+_YEAR_MONTHS_CACHE_TTL_SECONDS = 300.0
+_YEAR_MONTHS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_YEAR_MONTHS_CACHE_LOCK = Lock()
 
 
 def pg_connect() -> psycopg.Connection:
@@ -380,6 +384,13 @@ def _build_order_sql(
 
 
 def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
+    cache_key = (schema_name, table_name)
+    now = monotonic()
+    with _YEAR_MONTHS_CACHE_LOCK:
+        cached = _YEAR_MONTHS_CACHE.get(cache_key)
+        if cached is not None and float(cached.get("expires_at", 0)) > now:
+            return list(cached.get("items", []))
+
     query = sql.SQL(
         "SELECT DISTINCT year_month FROM {}.{} "
         "WHERE year_month IS NOT NULL "
@@ -394,7 +405,13 @@ def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
             cur.execute(query)
             rows = cur.fetchall()
 
-    return [int(row["year_month"]) for row in rows if row["year_month"] is not None]
+    values = [int(row["year_month"]) for row in rows if row["year_month"] is not None]
+    with _YEAR_MONTHS_CACHE_LOCK:
+        _YEAR_MONTHS_CACHE[cache_key] = {
+            "items": list(values),
+            "expires_at": monotonic() + _YEAR_MONTHS_CACHE_TTL_SECONDS,
+        }
+    return values
 
 
 def fetch_filter_options(
@@ -495,6 +512,10 @@ def fetch_items(
     if text_filters:
         merged_text_filters.update(text_filters)
 
+    response_columns: list[str] = []
+    trend_map: dict[str, Any] = {}
+    include_trends = False
+
     with pg_connect() as conn:
         profile = _get_table_profile(conn, schema_name, table_name)
         if not profile["exists"]:
@@ -542,15 +563,48 @@ def fetch_items(
             cur.execute(data_query, [*where_params, page_size, offset])
             rows = cur.fetchall()
 
+        response_columns = list(columns)
+        if table_name == "seller_sprite_word_frequency" and rows:
+            cache_profile = _get_table_profile(conn, schema_name, "seller_sprite_word_cache")
+            if cache_profile["exists"] and "google_trends_points" in cache_profile["valid_columns"]:
+                row_words = sorted(
+                    {
+                        str(row.get("word") or "").strip().lower()
+                        for row in rows
+                        if str(row.get("word") or "").strip()
+                    }
+                )
+                if row_words:
+                    trend_query = sql.SQL(
+                        """
+                        SELECT word, google_trends_points
+                        FROM {}.{}
+                        WHERE word = ANY(%s)
+                        """
+                    ).format(sql.Identifier(schema_name), sql.Identifier("seller_sprite_word_cache"))
+                    with conn.cursor() as cur:
+                        cur.execute(trend_query, (row_words,))
+                        trend_rows = cur.fetchall()
+                    for trend_row in trend_rows:
+                        word = str(trend_row.get("word") or "").strip().lower()
+                        if word:
+                            trend_map[word] = _serialize_value(trend_row.get("google_trends_points"))
+                include_trends = True
+                if "trends" not in response_columns:
+                    response_columns.append("trends")
+
     items: list[dict[str, Any]] = []
     for row in rows:
         item: dict[str, Any] = {}
         for key, value in row.items():
             item[key] = _serialize_value(value)
+        if include_trends:
+            row_word = str(row.get("word") or "").strip().lower()
+            item["trends"] = trend_map.get(row_word)
         items.append(item)
 
     return {
-        "columns": columns,
+        "columns": response_columns,
         "items": items,
         "total": total,
         "page": page,
@@ -602,6 +656,7 @@ def fetch_growth_top10_items(
             }
 
         columns = profile["columns"]
+        response_columns = list(columns)
         column_types = profile["column_types"]
         valid_columns = profile["valid_columns"]
 
@@ -659,11 +714,43 @@ def fetch_growth_top10_items(
             cur.execute(avg_query, avg_params)
             avg_row = cur.fetchone()
 
+        trend_map: dict[str, Any] = {}
+        if rows:
+            cache_profile = _get_table_profile(conn, schema_name, "seller_sprite_word_cache")
+            if cache_profile["exists"] and "google_trends_points" in cache_profile["valid_columns"]:
+                row_words = sorted(
+                    {
+                        str(row.get("word") or "").strip().lower()
+                        for row in rows
+                        if str(row.get("word") or "").strip()
+                    }
+                )
+                if row_words:
+                    trend_query = sql.SQL(
+                        """
+                        SELECT word, google_trends_points
+                        FROM {}.{}
+                        WHERE word = ANY(%s)
+                        """
+                    ).format(sql.Identifier(schema_name), sql.Identifier("seller_sprite_word_cache"))
+                    with conn.cursor() as cur:
+                        cur.execute(trend_query, (row_words,))
+                        trend_rows = cur.fetchall()
+                    for trend_row in trend_rows:
+                        word = str(trend_row.get("word") or "").strip().lower()
+                        if word:
+                            trend_map[word] = _serialize_value(trend_row.get("google_trends_points"))
+                if "trends" not in response_columns:
+                    response_columns.append("trends")
+
     items: list[dict[str, Any]] = []
     for row in rows:
         item: dict[str, Any] = {}
         for key, value in row.items():
             item[key] = _serialize_value(value)
+        row_word = str(row.get("word") or "").strip().lower()
+        if row_word:
+            item["trends"] = trend_map.get(row_word)
         items.append(item)
 
     avg_total_searches = None
@@ -671,7 +758,7 @@ def fetch_growth_top10_items(
         avg_total_searches = _serialize_value(avg_row.get("avg_total_searches"))
 
     return {
-        "columns": columns,
+        "columns": response_columns,
         "items": items,
         "total": len(items),
         "page": 1,

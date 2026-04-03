@@ -18,18 +18,87 @@ export async function triggerCrawlPipeline(): Promise<void> {
   await apiClient.post("/crawl/trigger");
 }
 
-export async function fetchPgYearMonths(): Promise<number[]> {
-  const { data } = await apiClient.get<YearMonthsResponse>("/pg/year-months");
-  return data.items;
+const YEAR_MONTHS_TIMEOUT_MS = 120000;
+const YEAR_MONTHS_CACHE_TTL_MS = 5 * 60 * 1000;
+const YEAR_MONTHS_RETRY_DELAYS_MS = [1000, 2000, 4000];
+const YEAR_MONTHS_CACHE_KEY = "__default__";
+
+type YearMonthsCacheEntry = {
+  items: number[];
+  expiresAt: number;
+};
+
+const yearMonthsCache = new Map<string, YearMonthsCacheEntry>();
+const yearMonthsInFlight = new Map<string, Promise<number[]>>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export async function fetchPgYearMonthsByTable(table?: string): Promise<number[]> {
+function getYearMonthsCacheKey(table?: string): string {
+  const normalized = String(table || "").trim();
+  return normalized || YEAR_MONTHS_CACHE_KEY;
+}
+
+async function requestPgYearMonths(table?: string): Promise<number[]> {
   const payload: Record<string, unknown> = {};
   if (table) payload.table = table;
   const { data } = await apiClient.get<YearMonthsResponse>("/pg/year-months", {
     params: payload,
+    timeout: YEAR_MONTHS_TIMEOUT_MS,
   });
-  return data.items;
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+export async function fetchPgYearMonths(): Promise<number[]> {
+  return fetchPgYearMonthsByTable();
+}
+
+export async function fetchPgYearMonthsByTable(table?: string): Promise<number[]> {
+  const cacheKey = getYearMonthsCacheKey(table);
+  const now = Date.now();
+  const cached = yearMonthsCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return [...cached.items];
+  }
+
+  const inFlight = yearMonthsInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async () => {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt <= YEAR_MONTHS_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        const items = await requestPgYearMonths(table);
+        yearMonthsCache.set(cacheKey, {
+          items: [...items],
+          expiresAt: Date.now() + YEAR_MONTHS_CACHE_TTL_MS,
+        });
+        return [...items];
+      } catch (error) {
+        lastError = error;
+        if (attempt >= YEAR_MONTHS_RETRY_DELAYS_MS.length) {
+          break;
+        }
+        await sleep(YEAR_MONTHS_RETRY_DELAYS_MS[attempt]);
+      }
+    }
+
+    if (cached) {
+      console.warn("fetchPgYearMonthsByTable failed, use stale cache:", table, lastError);
+      return [...cached.items];
+    }
+    throw lastError;
+  })();
+
+  yearMonthsInFlight.set(cacheKey, task);
+  try {
+    return await task;
+  } finally {
+    yearMonthsInFlight.delete(cacheKey);
+  }
 }
 
 export async function fetchWordFrequencyTrend(word: string): Promise<WordFrequencyTrendResponse> {
