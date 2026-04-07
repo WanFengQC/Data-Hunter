@@ -31,6 +31,8 @@ _TABLE_PROFILE_LOCK = Lock()
 _YEAR_MONTHS_CACHE_TTL_SECONDS = 300.0
 _YEAR_MONTHS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _YEAR_MONTHS_CACHE_LOCK = Lock()
+_YEAR_MONTH_INDEX_ATTEMPTS: set[tuple[str, str]] = set()
+_YEAR_MONTH_INDEX_ATTEMPTS_LOCK = Lock()
 
 
 def pg_connect() -> psycopg.Connection:
@@ -43,6 +45,16 @@ def pg_connect() -> psycopg.Connection:
         row_factory=dict_row,
     )
 
+
+def _pg_connect_autocommit() -> psycopg.Connection:
+    return psycopg.connect(
+        host=settings.pg_host,
+        user=settings.pg_user,
+        password=settings.pg_pass,
+        port=settings.pg_port,
+        dbname=settings.pg_db,
+        autocommit=True,
+    )
 
 def _build_table_profile(
     conn: psycopg.Connection, schema_name: str, table_name: str
@@ -135,6 +147,65 @@ def _get_column_meta(
         cur.execute(query, (schema_name, table_name))
         return cur.fetchall()
 
+
+def _index_exists(
+    conn: psycopg.Connection,
+    schema_name: str,
+    table_name: str,
+    index_name: str,
+) -> bool:
+    query = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = %s
+              AND tablename = %s
+              AND indexname = %s
+        ) AS exists
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, (schema_name, table_name, index_name))
+        row = cur.fetchone()
+    return bool(row["exists"])
+
+
+def _ensure_default_year_month_index(schema_name: str, table_name: str) -> None:
+    if table_name != settings.pg_table:
+        return
+
+    cache_key = (schema_name, table_name)
+    with _YEAR_MONTH_INDEX_ATTEMPTS_LOCK:
+        if cache_key in _YEAR_MONTH_INDEX_ATTEMPTS:
+            return
+
+    index_name = f"idx_{table_name}_year_month"
+    try:
+        with pg_connect() as conn:
+            profile = _get_table_profile(conn, schema_name, table_name)
+            if not profile["exists"] or "year_month" not in profile["valid_columns"]:
+                return
+            if _index_exists(conn, schema_name, table_name, index_name):
+                with _YEAR_MONTH_INDEX_ATTEMPTS_LOCK:
+                    _YEAR_MONTH_INDEX_ATTEMPTS.add(cache_key)
+                return
+
+        # Old seller_sprite_items imports did not create a year_month index.
+        with _pg_connect_autocommit() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("CREATE INDEX CONCURRENTLY IF NOT EXISTS {} ON {}.{} (year_month)").format(
+                        sql.Identifier(index_name),
+                        sql.Identifier(schema_name),
+                        sql.Identifier(table_name),
+                    )
+                )
+    except Exception:
+        with _YEAR_MONTH_INDEX_ATTEMPTS_LOCK:
+            _YEAR_MONTH_INDEX_ATTEMPTS.add(cache_key)
+        return
+
+    with _YEAR_MONTH_INDEX_ATTEMPTS_LOCK:
+        _YEAR_MONTH_INDEX_ATTEMPTS.add(cache_key)
 
 def _build_time_clauses(year: int | None, month: int | None) -> tuple[list[sql.SQL], list[Any]]:
     clauses: list[sql.SQL] = []
@@ -391,6 +462,8 @@ def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
         if cached is not None and float(cached.get("expires_at", 0)) > now:
             return list(cached.get("items", []))
 
+    _ensure_default_year_month_index(schema_name, table_name)
+
     query = sql.SQL(
         "SELECT DISTINCT year_month FROM {}.{} "
         "WHERE year_month IS NOT NULL "
@@ -399,7 +472,7 @@ def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
 
     with pg_connect() as conn:
         profile = _get_table_profile(conn, schema_name, table_name)
-        if not profile["exists"]:
+        if not profile["exists"] or "year_month" not in profile["valid_columns"]:
             return []
         with conn.cursor() as cur:
             cur.execute(query)
@@ -412,7 +485,6 @@ def fetch_year_months(schema_name: str, table_name: str) -> list[int]:
             "expires_at": monotonic() + _YEAR_MONTHS_CACHE_TTL_SECONDS,
         }
     return values
-
 
 def fetch_filter_options(
     schema_name: str,

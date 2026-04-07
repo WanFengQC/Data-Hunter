@@ -23,3 +23,4 @@ dist/
 backend/scripts/seller_sprite/ara*
 *.csv
 backend/scripts/
+tmp_exports/
