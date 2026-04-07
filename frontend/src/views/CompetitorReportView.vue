@@ -583,17 +583,17 @@ const metric = computed(() => { const rows = snapshotRows.value, dates = rows.ma
 const topProducts = computed(() => [...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, topProductCount.value));
 const brandRank = computed(() => group(snapshotRows.value, "brand").slice(0,10)), sellerRank = computed(() => group(snapshotRows.value, "sellername").slice(0,10));
 const productTop10Share = computed(() => metric.value.units ? sum(topProducts.value.map(r=>n(r.totalunits)))/metric.value.units : 0), brandTop10Share = computed(() => metric.value.units ? sum(brandRank.value.map(r=>r.units))/metric.value.units : 0), sellerTop10Share = computed(() => metric.value.units ? sum(sellerRank.value.map(r=>r.units))/metric.value.units : 0);
-const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"近30天销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
-const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"近30天总销量", value:fi(metric.value.units) }, { label:"近30天总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"近30天评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
+const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"当月销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
+const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"当月总销量", value:fi(metric.value.units) }, { label:"当月总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"当月评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
 const topRows = computed<Metric[]>(() => {
   const prefix = `销量前${topProductCount.value}商品`;
   return [
     { label:`${prefix}样本总数`, value:fi(topProducts.value.length) },
     { label:`${prefix}BSR均值`, value:fi(avg(topProducts.value.map(r=>n(r.bsrrank)))) },
-    { label:`${prefix}近30天总销量`, value:fi(sum(topProducts.value.map(r=>n(r.totalunits)))) },
-    { label:`${prefix}近30天总销售额`, value:fc(sum(topProducts.value.map(r=>n(r.totalamount)))) },
+    { label:`${prefix}当月总销量`, value:fi(sum(topProducts.value.map(r=>n(r.totalunits)))) },
+    { label:`${prefix}当月总销售额`, value:fc(sum(topProducts.value.map(r=>n(r.totalamount)))) },
     { label:`${prefix}平均价格`, value:fc(avg(topProducts.value.map(r=>n(r.price)))) },
-    { label:`${prefix}近30天评论平均增长数`, value:fd(avg(topProducts.value.map(r=>n(r.reviewsdelta))),1) },
+    { label:`${prefix}当月评论平均增长数`, value:fd(avg(topProducts.value.map(r=>n(r.reviewsdelta))),1) },
     { label:`${prefix}平均评论数`, value:fd(avg(topProducts.value.map(r=>n(r.reviews))),0) },
     { label:`${prefix}平均星级`, value:fd(avg(topProducts.value.map(r=>n(r.rating))),1) },
   ];
@@ -605,8 +605,8 @@ const newRows = computed<Metric[]>(() => {
     { label:"新品占比", value:fp(metric.value.newRatio) },
     { label:"新品评分数(最高/平均/最低)", value:`${fd(metric.value.newMax,1)}/${fd(metric.value.newAvgRating,1)}/${fd(metric.value.newMin,1)}` },
     { label:"新品平均价格", value:fc(metric.value.newAvgPrice) },
-    { label:`${prefix}近30天总销量`, value:fi(metric.value.newUnits) },
-    { label:`${prefix}近30天总销售额`, value:fc(metric.value.newAmount) },
+    { label:`${prefix}当月总销量`, value:fi(metric.value.newUnits) },
+    { label:`${prefix}当月总销售额`, value:fc(metric.value.newAmount) },
     { label:"商品首次上架时间", value:fdate(metric.value.firstDate) },
     { label:"商品最新上架时间", value:fdate(metric.value.lastDate) },
   ];

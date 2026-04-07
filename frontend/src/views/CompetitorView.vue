@@ -35,6 +35,9 @@
             <option value="asc">升序</option>
           </select>
         </label>
+        <button class="secondary-btn" type="button" @click="exportCsv" :disabled="!total || exportLoading">
+          {{ exportLoading ? "导出中..." : "导出 CSV" }}
+        </button>
         <button class="secondary-btn" type="button" @click="openReport">查看报告</button>
       </div>
 
@@ -377,7 +380,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
-import { fetchPgFilterOptions, fetchPgItems, fetchPgYearMonthsByTable } from "@/api/data";
+import {
+  createPgExportJob,
+  downloadPgExportJob,
+  fetchPgExportJob,
+  fetchPgFilterOptions,
+  fetchPgItems,
+  fetchPgYearMonthsByTable,
+} from "@/api/data";
 import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
 import TrendDataModal from "@/components/TrendDataModal.vue";
 import type { PgFilterOption, PgTrendPoint } from "@/types/data";
@@ -459,6 +469,7 @@ const sortBy = ref("totalunits");
 const sortDir = ref<"asc" | "desc">("desc");
 const loading = ref(false);
 const loadingMore = ref(false);
+const exportLoading = ref(false);
 const error = ref("");
 const yearMonthOptions = ref<number[]>([]);
 const DEFAULT_YEAR = 2026;
@@ -741,6 +752,59 @@ function openReport(): void {
       month: selectedMonth.value || undefined,
     },
   });
+}
+
+async function exportCsv(): Promise<void> {
+  if (!total.value || exportLoading.value) return;
+
+  exportLoading.value = true;
+  try {
+    const job = await createPgExportJob({
+      table: TARGET_TABLE,
+      year: selectedYear.value || undefined,
+      month: selectedMonth.value || undefined,
+      sortBy: sortBy.value || undefined,
+      sortDir: sortDir.value,
+      textFilters: normalizedTextFilters(),
+      valueFilters: normalizedValueFilters(),
+    });
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let fileName = `competitors_${selectedYear.value || "all"}_${selectedMonth.value || "all"}.csv`;
+    let completed = false;
+
+    for (let i = 0; i < 1800; i += 1) {
+      const state = await fetchPgExportJob(job.job_id);
+      if (state.status === "completed") {
+        if (state.file_name) fileName = state.file_name;
+        completed = true;
+        break;
+      }
+      if (state.status === "failed") {
+        throw new Error(state.error || "导出任务失败");
+      }
+      await sleep(1000);
+    }
+
+    if (!completed) {
+      throw new Error("导出任务超时，请重试");
+    }
+
+    const blob = await downloadPgExportJob(job.job_id);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("export competitor csv failed:", err);
+    alert("导出失败，请稍后重试。");
+  } finally {
+    exportLoading.value = false;
+  }
 }
 
 function normalizedValueFilters(): Record<string, string[]> {
