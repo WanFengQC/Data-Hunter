@@ -230,6 +230,7 @@ type CategoryOption = { path: string; locale: string };
 const CATEGORY_TEDDY = "Toys & Games:Stuffed Animals & Plush Toys:Stuffed Animals & Teddy Bears";
 const CATEGORY_PILLOWS = "Toys & Games:Stuffed Animals & Plush Toys:Plush Pillows";
 const CATEGORY_ALL = "ALL";
+const NIUNIU_DADDY_BRAND_KEY = "niuniudaddy";
 const REPORT_COLUMNS = [
   "asin",
   "availabledate",
@@ -238,6 +239,7 @@ const REPORT_COLUMNS = [
   "bsrrank",
   "imageurl",
   "nodelabelpath",
+  "parent",
   "price",
   "rating",
   "reviews",
@@ -514,6 +516,15 @@ function getCategoryLabel(path: string): string {
   if (path === CATEGORY_TEDDY) return "Stuffed Animals & Teddy Bears";
   return path;
 }
+function normalizeBrandKey(value: unknown): string {
+  return t(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function applyReportRowPatches(rows: Row[]): Row[] {
+  return rows.filter((row) => {
+    if (normalizeBrandKey(row.brand) !== NIUNIU_DADDY_BRAND_KEY) return true;
+    return t(row.parent).toUpperCase() !== t(row.asin).toUpperCase();
+  });
+}
 const group = (rows: Row[], field: string) => { const total = sum(rows.map(r => n(r.totalunits))); const m = new Map<string, RankRow>(); rows.forEach(row => { const key = t(row[field]) || "未知"; const cur = m.get(key) || { name:key,count:0,units:0,amount:0,newUnits:0,newAmount:0,newCount:0,share:0 }; const units = n(row.totalunits) || 0; const amount = n(row.totalamount) || 0; cur.count += 1; cur.units += units; cur.amount += amount; if (isNew(row)) { cur.newUnits += units; cur.newAmount += amount; cur.newCount += 1; } m.set(key, cur); }); return [...m.values()].sort((a,b)=>b.units-a.units).map(r => ({ ...r, share: total ? r.units/total : 0 })); };
 const bucket = (rows: Row[], getter: (row: Row) => number | null, edges: number[], labels: string[]) => { const total = sum(rows.map(r => n(r.totalunits))); const out = labels.map(label => ({ label, count:0, units:0, share:0, rows: [] as Row[] })); rows.forEach(row => { const value = getter(row); if (value === null) return; for (let i=0;i<edges.length-1;i+=1) if (value >= edges[i] && value < edges[i+1]) { out[i].count += 1; out[i].units += n(row.totalunits) || 0; out[i].rows.push(row); break; } }); out.forEach(item => item.share = total ? item.units/total : 0); return out; };
 const categoryOptions = computed<CategoryOption[]>(() => {
@@ -537,7 +548,8 @@ const categoryRows = computed(() => {
   if (!current || current.path === CATEGORY_ALL) return allRows.value;
   return allRows.value.filter((row) => normalizeCategoryPath(row.nodelabelpath) === current.path);
 });
-const historyByMonth = computed<MonthSum[]>(() => { const m = new Map<number, { amount:number; units:number; bsrs:number[] }>(); categoryRows.value.forEach(row => { const key = ym(row); if (!key) return; const cur = m.get(key) || { amount:0, units:0, bsrs:[] }; cur.amount += n(row.totalamount) || 0; cur.units += n(row.totalunits) || 0; if (n(row.bsrrank) !== null) cur.bsrs.push(n(row.bsrrank)!); m.set(key, cur); }); return [...m.entries()].map(([key, cur]) => ({ ym:key, label:fmtYm(key), amount:cur.amount, units:cur.units, avgBsr:avg(cur.bsrs) })).sort((a,b)=>a.ym-b.ym); });
+const patchedCategoryRows = computed(() => applyReportRowPatches(categoryRows.value));
+const historyByMonth = computed<MonthSum[]>(() => { const m = new Map<number, { amount:number; units:number; bsrs:number[] }>(); patchedCategoryRows.value.forEach(row => { const key = ym(row); if (!key) return; const cur = m.get(key) || { amount:0, units:0, bsrs:[] }; cur.amount += n(row.totalamount) || 0; cur.units += n(row.totalunits) || 0; if (n(row.bsrrank) !== null) cur.bsrs.push(n(row.bsrrank)!); m.set(key, cur); }); return [...m.entries()].map(([key, cur]) => ({ ym:key, label:fmtYm(key), amount:cur.amount, units:cur.units, avgBsr:avg(cur.bsrs) })).sort((a,b)=>a.ym-b.ym); });
 const yearOptions = computed(() => [...new Set(historyByMonth.value.map((item) => Math.floor(item.ym / 100)))].sort((a, b) => a - b));
 const monthOptions = computed(() => {
   const months = historyByMonth.value
@@ -563,7 +575,7 @@ const focusYm = computed(() => {
   return months.at(-1) ?? null;
 });
 const focusLabel = computed(() => fmtYm(focusYm.value));
-const snapshotRows = computed(() => focusYm.value ? categoryRows.value.filter(row => ym(row) === focusYm.value) : []);
+const snapshotRows = computed(() => focusYm.value ? patchedCategoryRows.value.filter(row => ym(row) === focusYm.value) : []);
 const reportTitle = computed(() => `${currentCategoryLabel.value === CATEGORY_ALL ? "All Categories" : currentCategoryLabel.value} Report`);
 const reportSubtitle = computed(() => `快照月份 ${focusLabel.value}，样本商品 ${fi(snapshotRows.value.length)} 个，历史月份 ${fi(historyByMonth.value.length)} 个。`);
 const topProductCount = computed(() => {
