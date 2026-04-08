@@ -156,14 +156,50 @@
       <section class="report-panel"><div class="report-panel-header"><h3>行业销售趋势</h3></div><ReportChart :option="salesTrendOption" height="360px" /></section>
 
       <section class="report-grid">
-        <article class="report-panel"><div class="report-panel-header"><h3>商品集中度</h3><span class="report-chip">TOP50 {{ formatPercent(productTop50Share) }}</span></div><ReportChart :option="productOption" height="320px" @chart-click="openProductAmazon" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>品牌集中度</h3><span class="report-chip">TOP50 {{ formatPercent(brandTop50Share) }}</span></div><ReportChart :option="brandOption" height="320px" @chart-click="openBrandBucketModal" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家集中度</h3><span class="report-chip">TOP50 {{ formatPercent(sellerTop50Share) }}</span></div><ReportChart :option="sellerOption" height="320px" @chart-click="openSellerBucketModal" /></article>
+        <article class="report-panel">
+          <div class="report-panel-header">
+            <div class="report-panel-title-group">
+              <h3>商品集中度</h3>
+              <div class="report-segmented" role="tablist" aria-label="商品集中度指标切换">
+                <button type="button" class="report-segmented-btn" :class="{ active: productConcentrationMetric === 'units' }" @click="productConcentrationMetric = 'units'">销量</button>
+                <button type="button" class="report-segmented-btn" :class="{ active: productConcentrationMetric === 'amount' }" @click="productConcentrationMetric = 'amount'">销售额</button>
+              </div>
+            </div>
+            <span class="report-chip">TOP50 {{ formatPercent(productTop50Share) }}</span>
+          </div>
+          <ReportChart :option="productOption" height="320px" @chart-click="openProductAmazon" />
+        </article>
+        <article class="report-panel">
+          <div class="report-panel-header">
+            <div class="report-panel-title-group">
+              <h3>品牌集中度</h3>
+              <div class="report-segmented" role="tablist" aria-label="品牌集中度指标切换">
+                <button type="button" class="report-segmented-btn" :class="{ active: brandConcentrationMetric === 'units' }" @click="brandConcentrationMetric = 'units'">销量</button>
+                <button type="button" class="report-segmented-btn" :class="{ active: brandConcentrationMetric === 'amount' }" @click="brandConcentrationMetric = 'amount'">销售额</button>
+              </div>
+            </div>
+            <span class="report-chip">TOP50 {{ formatPercent(brandTop50Share) }}</span>
+          </div>
+          <ReportChart :option="brandOption" height="320px" @chart-click="openBrandBucketModal" />
+        </article>
+        <article class="report-panel">
+          <div class="report-panel-header">
+            <div class="report-panel-title-group">
+              <h3>卖家集中度</h3>
+              <div class="report-segmented" role="tablist" aria-label="卖家集中度指标切换">
+                <button type="button" class="report-segmented-btn" :class="{ active: sellerConcentrationMetric === 'units' }" @click="sellerConcentrationMetric = 'units'">销量</button>
+                <button type="button" class="report-segmented-btn" :class="{ active: sellerConcentrationMetric === 'amount' }" @click="sellerConcentrationMetric = 'amount'">销售额</button>
+              </div>
+            </div>
+            <span class="report-chip">TOP50 {{ formatPercent(sellerTop50Share) }}</span>
+          </div>
+          <ReportChart :option="sellerOption" height="320px" @chart-click="openSellerBucketModal" />
+        </article>
       </section>
 
       <section class="report-grid report-grid-2">
-        <article class="report-panel"><div class="report-panel-header"><h3>品牌销售排行</h3></div><table class="report-table"><thead><tr><th>品牌</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="r in brandRank" :key="r.name"><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家销售排行</h3></div><table class="report-table"><thead><tr><th>卖家</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="r in sellerRank" :key="r.name"><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>品牌销售排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>品牌</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="(r, index) in brandRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>卖家销售排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>卖家</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="(r, index) in sellerRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
       </section>
 
       <section class="report-grid report-grid-2">
@@ -224,6 +260,7 @@ import { fetchPgAllItems } from "@/api/data";
 type Row = Record<string, unknown>;
 type Metric = { label: string; value: string };
 type RankRow = { name: string; count: number; units: number; amount: number; newUnits: number; newAmount: number; newCount: number; share: number };
+type ConcentrationMetricMode = "units" | "amount";
 type Dist = { label: string; count: number; units: number; share: number; extra?: number; name?: string; key?: string; rows?: Row[]; row?: Row; amount?: number; newAmount?: number; newCount?: number; entityLabel?: string };
 type MonthSum = { ym: number; label: string; amount: number; units: number; avgBsr: number | null };
 type CategoryOption = { path: string; locale: string };
@@ -284,6 +321,9 @@ const SELLER_NATION_ZH: Record<string, string> = {
 const route = useRoute(), router = useRouter(), loading = ref(true), loadingText = ref("准备数据..."), error = ref(""), allRows = ref<Row[]>([]), activeCategoryPath = ref(""), monthHeaders = [1,2,3,4,5,6,7,8,9,10,11,12];
 const selectedYear = computed(() => Number(route.query.year || 0) || 0), selectedMonth = computed(() => Number(route.query.month || 0) || 0);
 const switchingFilters = ref(false);
+const productConcentrationMetric = ref<ConcentrationMetricMode>("units");
+const brandConcentrationMetric = ref<ConcentrationMetricMode>("units");
+const sellerConcentrationMetric = ref<ConcentrationMetricMode>("units");
 const topProductMode = ref<"3" | "5" | "10" | "20" | "50" | "custom">("10");
 const topProductCustomCount = ref(10);
 const newProductMode = ref<"1" | "3" | "6" | "12" | "custom">("6");
@@ -362,12 +402,22 @@ function renderPriceBucketTooltip(point: ReturnType<typeof priceBucketModalPoint
   }
   return priceBucketTooltipRoot;
 }
-function renderProductInfoCard(row: Row, options: { rank: number; share: number; dataIndex: number; root: HTMLDivElement | null; cacheKeyRef: { value: number } }) {
+function renderProductInfoCard(row: Row, options: { rank: number; share: number; metricMode: ConcentrationMetricMode; dataIndex: number; root: HTMLDivElement | null; cacheKeyRef: { value: number } }) {
   const salesValue = n(row.totalunits) || 0;
   const newSalesValue = isNew(row) ? salesValue : 0;
-  const salesLabel = newSalesValue >= salesValue && newSalesValue > 0 ? "新品销量" : "销量";
   const amount = n(row.totalamount) || 0;
+  const newAmount = isNew(row) ? amount : 0;
   const amountShare = metric.value.amount ? (amount / metric.value.amount) * 100 : 0;
+  const unitShare = metric.value.units ? (salesValue / metric.value.units) * 100 : 0;
+  const primaryLabel = options.metricMode === "amount"
+    ? (newAmount >= amount && newAmount > 0 ? "新品销售额" : "销售额")
+    : (newSalesValue >= salesValue && newSalesValue > 0 ? "新品销量" : "销量");
+  const primaryValue = options.metricMode === "amount"
+    ? (newAmount >= amount && newAmount > 0 ? newAmount : amount)
+    : (newSalesValue >= salesValue && newSalesValue > 0 ? newSalesValue : salesValue);
+  const primaryValueText = options.metricMode === "amount" ? formatCurrency(primaryValue) : formatInteger(primaryValue);
+  const primaryShareLabel = options.metricMode === "amount" ? "销售额占比" : "销量占比";
+  const primaryShare = options.metricMode === "amount" ? amountShare : options.share;
   const html = [
     `<div style="max-width:760px;">`,
     `<div style="font-size:14px;font-weight:700;line-height:1.5;color:#12203c;margin-bottom:10px;white-space:normal;word-break:break-word;">${t(row.title) || t(row.asin) || `#${options.rank}`}</div>`,
@@ -375,13 +425,13 @@ function renderProductInfoCard(row: Row, options: { rank: number; share: number;
     t(row.imageurl) ? `<img src="${t(row.imageurl)}" alt="${t(row.asin) || "product"}" style="width:88px;height:88px;border-radius:10px;object-fit:cover;border:1px solid #e5ebf5;flex:none;" loading="eager" />` : "",
     `<div style="display:grid;grid-template-columns:repeat(4, minmax(90px, auto));gap:6px 14px;font-size:13px;line-height:1.5;color:#334155;">`,
     `<div><span style="color:#64748b;">排名</span> 第${options.rank}名</div>`,
-    `<div><span style="color:#64748b;">${salesLabel}</span> ${formatInteger(newSalesValue >= salesValue && newSalesValue > 0 ? newSalesValue : salesValue)}</div>`,
+    `<div><span style="color:#64748b;">${primaryLabel}</span> ${primaryValueText}</div>`,
     t(row.asin) ? `<div><span style="color:#64748b;">ASIN</span> ${t(row.asin)}</div>` : "",
-    `<div><span style="color:#64748b;">月销售额</span> ${formatCurrency(amount)}</div>`,
+    `<div><span style="color:#64748b;">${options.metricMode === "amount" ? "月销量" : "月销售额"}</span> ${options.metricMode === "amount" ? formatInteger(salesValue) : formatCurrency(amount)}</div>`,
     `<div><span style="color:#64748b;">品牌</span> ${t(row.brand) || "-"}</div>`,
-    `<div><span style="color:#64748b;">销量占比</span> ${options.share.toFixed(2)}%</div>`,
+    `<div><span style="color:#64748b;">${primaryShareLabel}</span> ${primaryShare.toFixed(2)}%</div>`,
     `<div><span style="color:#64748b;">卖家</span> ${t(row.sellername) || "-"}</div>`,
-    `<div><span style="color:#64748b;">销售额占比</span> ${amountShare.toFixed(2)}%</div>`,
+    `<div><span style="color:#64748b;">${options.metricMode === "amount" ? "销量占比" : "销售额占比"}</span> ${options.metricMode === "amount" ? unitShare.toFixed(2) : amountShare.toFixed(2)}%</div>`,
     `<div><span style="color:#64748b;">卖家类型</span> ${t(row.sellertype) || "NA"}</div>`,
     `<div><span style="color:#64748b;">上架时间</span> ${fdate(dateMs(row))}</div>`,
     `<div><span style="color:#64748b;">价格</span> ${formatCurrency(n(row.price))}</div>`,
@@ -398,7 +448,7 @@ function renderProductInfoCard(row: Row, options: { rank: number; share: number;
   }
   return options.root;
 }
-function renderAggregateInfoCard(point: Dist, options: { rank: number; dataIndex: number; root: HTMLDivElement | null; cacheKeyRef: { value: number } }) {
+function renderAggregateInfoCard(point: Dist, options: { rank: number; metricMode: ConcentrationMetricMode; dataIndex: number; root: HTMLDivElement | null; cacheKeyRef: { value: number } }) {
   const units = point.units || 0;
   const newUnits = point.extra || 0;
   const nonNewUnits = Math.max(units - newUnits, 0);
@@ -407,19 +457,32 @@ function renderAggregateInfoCard(point: Dist, options: { rank: number; dataIndex
   const nonNewAmount = Math.max(amount - newAmount, 0);
   const newCount = point.newCount || 0;
   const amountShare = metric.value.amount ? (amount / metric.value.amount) * 100 : 0;
+  const unitShare = metric.value.units ? (units / metric.value.units) * 100 : 0;
   const unitNewRatio = units ? (newUnits / units) * 100 : 0;
   const unitNonNewRatio = units ? (nonNewUnits / units) * 100 : 0;
   const amountNewRatio = amount ? (newAmount / amount) * 100 : 0;
   const amountNonNewRatio = amount ? (nonNewAmount / amount) * 100 : 0;
+  const primaryLabel = options.metricMode === "amount" ? "月销售额" : "月销量";
+  const primaryValue = options.metricMode === "amount" ? formatCurrency(amount) : formatInteger(units);
+  const primaryShareLabel = options.metricMode === "amount" ? "销售额占比" : "销量占比";
+  const primaryShare = options.metricMode === "amount"
+    ? `${amountShare.toFixed(2)}% (新品: ${amountNewRatio.toFixed(2)}%, 非新品: ${amountNonNewRatio.toFixed(2)}%)`
+    : `${unitShare.toFixed(2)}% (新品: ${unitNewRatio.toFixed(2)}%, 非新品: ${unitNonNewRatio.toFixed(2)}%)`;
+  const secondaryLabel = options.metricMode === "amount" ? "月销量" : "月销售额";
+  const secondaryValue = options.metricMode === "amount" ? formatInteger(units) : formatCurrency(amount);
+  const secondaryShareLabel = options.metricMode === "amount" ? "销量占比" : "销售额占比";
+  const secondaryShare = options.metricMode === "amount"
+    ? `${unitShare.toFixed(2)}% (新品: ${unitNewRatio.toFixed(2)}%, 非新品: ${unitNonNewRatio.toFixed(2)}%)`
+    : `${amountShare.toFixed(2)}% (新品: ${amountNewRatio.toFixed(2)}%, 非新品: ${amountNonNewRatio.toFixed(2)}%)`;
   const html = [
     `<div style="max-width:520px;display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:13px;line-height:1.55;color:#334155;">`,
     `<div style="color:#64748b;">排名</div><div style="text-align:right;color:#12203c;">第${options.rank}名</div>`,
     `<div style="color:#64748b;">${point.entityLabel || "名称"}</div><div style="text-align:right;color:#12203c;">${point.name || point.label || "-"}</div>`,
     `<div style="color:#64748b;">商品数量/新品</div><div style="text-align:right;color:#12203c;">${formatInteger(point.count)}/${formatInteger(newCount)}</div>`,
-    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}月销量</div><div style="text-align:right;color:#12203c;">${formatInteger(units)}</div>`,
-    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}销量占比</div><div style="text-align:right;color:#12203c;">${Number((point.share * 100).toFixed(2))}% (新品: ${unitNewRatio.toFixed(2)}%, 非新品: ${unitNonNewRatio.toFixed(2)}%)</div>`,
-    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}月销售额</div><div style="text-align:right;color:#12203c;">${formatCurrency(amount)}</div>`,
-    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}销售额占比</div><div style="text-align:right;color:#12203c;">${amountShare.toFixed(2)}% (新品: ${amountNewRatio.toFixed(2)}%, 非新品: ${amountNonNewRatio.toFixed(2)}%)</div>`,
+    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}${primaryLabel}</div><div style="text-align:right;color:#12203c;">${primaryValue}</div>`,
+    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}${primaryShareLabel}</div><div style="text-align:right;color:#12203c;">${primaryShare}</div>`,
+    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}${secondaryLabel}</div><div style="text-align:right;color:#12203c;">${secondaryValue}</div>`,
+    `<div style="color:#64748b;">该${point.entityLabel === "卖家名称" ? "卖家" : "品牌"}${secondaryShareLabel}</div><div style="text-align:right;color:#12203c;">${secondaryShare}</div>`,
     `</div>`,
   ].join("");
   if (!options.root) return html;
@@ -600,10 +663,43 @@ const newProductMonthCount = computed(() => {
 });
 const newProductDayLimit = computed(() => newProductMonthCount.value * 30);
 const isNew = (row: Row) => (n(row.availabledays) ?? 999999) <= newProductDayLimit.value;
+const getRowMetricValue = (row: Row, metricMode: ConcentrationMetricMode) => metricMode === "amount" ? (n(row.totalamount) || 0) : (n(row.totalunits) || 0);
+const getRowNewMetricValue = (row: Row, metricMode: ConcentrationMetricMode) => isNew(row) ? getRowMetricValue(row, metricMode) : 0;
+const getDistMetricValue = (point: Dist, metricMode: ConcentrationMetricMode, barMetric: "units" | "count") => {
+  if (barMetric === "count") return point.count;
+  return metricMode === "amount" ? (point.amount || 0) : (point.units || point.count);
+};
+const getDistNewMetricValue = (point: Dist, metricMode: ConcentrationMetricMode) => metricMode === "amount" ? (point.newAmount || 0) : (point.extra || 0);
+const getMetricFormatter = (metricMode: ConcentrationMetricMode, barMetric: "units" | "count") =>
+  (value: number) => barMetric === "count" || metricMode === "units" ? formatInteger(value) : formatCurrency(value);
+const topShareLabel = (metricMode: ConcentrationMetricMode) => metricMode === "amount" ? "销售额占比" : "销量占比";
 const metric = computed(() => { const rows = snapshotRows.value, dates = rows.map(dateMs).filter((v): v is number => v !== null).sort((a,b)=>a-b), newRows = rows.filter(isNew), ratings = newRows.map(r=>n(r.rating)).filter((v): v is number => v !== null); return { total:rows.length, brands:new Set(rows.map(r=>t(r.brand)).filter(Boolean)).size, sellers:new Set(rows.map(r=>t(r.sellername)).filter(Boolean)).size, units:sum(rows.map(r=>n(r.totalunits))), amount:sum(rows.map(r=>n(r.totalamount))), avgBsr:avg(rows.map(r=>n(r.bsrrank))), avgPrice:avg(rows.map(r=>n(r.price))), avgReviewGrow:avg(rows.map(r=>n(r.reviewsdelta))), avgReviews:avg(rows.map(r=>n(r.reviews))), avgRating:avg(rows.map(r=>n(r.rating))), avgSellerCount:avg(rows.map(r=>n(r.sellers))), newRows, newCount:newRows.length, newRatio:rows.length ? newRows.length/rows.length : 0, newAvgPrice:avg(newRows.map(r=>n(r.price))), newAvgRating:avg(newRows.map(r=>n(r.rating))), newMax:ratings.length ? Math.max(...ratings) : null, newMin:ratings.length ? Math.min(...ratings) : null, newUnits:sum(newRows.map(r=>n(r.totalunits))), newAmount:sum(newRows.map(r=>n(r.totalamount))), firstDate:dates[0] ?? null, lastDate:dates.at(-1) ?? null, fbaRatio:rows.length ? rows.filter(r=>t(r.sellertype).toUpperCase()==="FBA").length/rows.length : 0, videoRatio:rows.length ? rows.filter(r=>yes(r.video)).length/rows.length : 0, ebcRatio:rows.length ? rows.filter(r=>yes(r.ebc)).length/rows.length : 0 }; });
 const topProducts = computed(() => [...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, topProductCount.value));
 const brandRank = computed(() => group(snapshotRows.value, "brand").slice(0,10)), sellerRank = computed(() => group(snapshotRows.value, "sellername").slice(0,10));
-const productTop50Share = computed(() => metric.value.units ? sum([...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, CONCENTRATION_TOP_LIMIT).map(r=>n(r.totalunits)))/metric.value.units : 0), brandTop50Share = computed(() => metric.value.units ? sum(group(snapshotRows.value, "brand").slice(0, CONCENTRATION_TOP_LIMIT).map(r=>r.units))/metric.value.units : 0), sellerTop50Share = computed(() => metric.value.units ? sum(group(snapshotRows.value, "sellername").slice(0, CONCENTRATION_TOP_LIMIT).map(r=>r.units))/metric.value.units : 0);
+const productTop50Share = computed(() => {
+  const total = productConcentrationMetric.value === "amount" ? metric.value.amount : metric.value.units;
+  if (!total) return 0;
+  return sum([...snapshotRows.value]
+    .sort((a, b) => getRowMetricValue(b, productConcentrationMetric.value) - getRowMetricValue(a, productConcentrationMetric.value))
+    .slice(0, CONCENTRATION_TOP_LIMIT)
+    .map((row) => getRowMetricValue(row, productConcentrationMetric.value))) / total;
+});
+const brandTop50Share = computed(() => {
+  const total = brandConcentrationMetric.value === "amount" ? metric.value.amount : metric.value.units;
+  if (!total) return 0;
+  return sum(group(snapshotRows.value, "brand")
+    .sort((a, b) => (brandConcentrationMetric.value === "amount" ? b.amount - a.amount : b.units - a.units))
+    .slice(0, CONCENTRATION_TOP_LIMIT)
+    .map((row) => brandConcentrationMetric.value === "amount" ? row.amount : row.units)) / total;
+});
+const sellerTop50Share = computed(() => {
+  const total = sellerConcentrationMetric.value === "amount" ? metric.value.amount : metric.value.units;
+  if (!total) return 0;
+  return sum(group(snapshotRows.value, "sellername")
+    .sort((a, b) => (sellerConcentrationMetric.value === "amount" ? b.amount - a.amount : b.units - a.units))
+    .slice(0, CONCENTRATION_TOP_LIMIT)
+    .map((row) => sellerConcentrationMetric.value === "amount" ? row.amount : row.units)) / total;
+});
 const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"当月销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
 const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"当月总销量", value:fi(metric.value.units) }, { label:"当月总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"当月评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
 const topRows = computed<Metric[]>(() => {
@@ -643,11 +739,12 @@ const yearTable = computed(() => [...new Set(historyByMonth.value.map((r) => Mat
     });
     return { year, monthMap, total: rows.reduce((acc, item) => acc + item.amount, 0) };
   }));
-const lineBar = (points: Dist[], bar: string, line: string, second?: string, rankLabel = false, collapseNewOnly = false, enableZoom = false, stackSecond = false, barMetric: "units" | "count" = "units", showAllLabels = false): EChartsOption => {
+const lineBar = (points: Dist[], bar: string, line: string, second?: string, rankLabel = false, collapseNewOnly = false, enableZoom = false, stackSecond = false, barMetric: "units" | "count" = "units", showAllLabels = false, valueMode: ConcentrationMetricMode = "units"): EChartsOption => {
   const initialZoomEndValue = Math.max(
     0,
     Math.min(showAllLabels ? CONCENTRATION_TOP_LIMIT : 30, points.length) - 1,
   );
+  const formatBarValue = getMetricFormatter(valueMode, barMetric);
   const formatZoomIndex = (value: number | string) => {
     const index = Number(value);
     if (!Number.isFinite(index)) return "-";
@@ -674,6 +771,7 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
         return renderProductInfoCard(point.row, {
           rank: dataIndex + 1,
           share: Number((point.share * 100).toFixed(2)),
+          metricMode: valueMode,
           dataIndex,
           root: productTooltipRoot,
           cacheKeyRef: {
@@ -685,6 +783,7 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
       if (stackSecond && point?.name) {
         return renderAggregateInfoCard(point, {
           rank: dataIndex + 1,
+          metricMode: valueMode,
           dataIndex,
           root: aggregateTooltipRoot,
           cacheKeyRef: {
@@ -695,25 +794,29 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
       }
       const lines = [`<div style="max-width:420px;white-space:normal;word-break:break-word;">${point?.name || point?.label || "-"}</div>`];
       if (collapseNewOnly && second && point) {
-        const totalValue = point.units || point.count || 0;
-        const newValue = point.extra || 0;
+        const totalValue = getDistMetricValue(point, valueMode, barMetric);
+        const newValue = getDistNewMetricValue(point, valueMode);
         const salesLabel = newValue >= totalValue && newValue > 0 ? second : bar;
-        const salesValue = newValue >= totalValue && newValue > 0 ? newValue : totalValue;
+        const salesValueText = formatBarValue(newValue >= totalValue && newValue > 0 ? newValue : totalValue);
         const salesMarker = newValue >= totalValue && newValue > 0 ? (seriesList[1]?.marker || "") : (seriesList[0]?.marker || "");
-        lines.push(`<div>${salesMarker}${salesLabel}: ${salesValue}</div>`);
+        lines.push(`<div>${salesMarker}${salesLabel}: ${salesValueText}</div>`);
         lines.push(`<div>${seriesList.at(-1)?.marker || ""}${line}: ${Number((point.share * 100).toFixed(2))}%</div>`);
         return lines.join("");
       }
       if (point) {
-        lines.push(`<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;margin-right:6px;vertical-align:middle;"></span>销量: ${formatInteger(point.units || 0)}</div>`);
+        lines.push(`<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;margin-right:6px;vertical-align:middle;"></span>${bar}: ${formatBarValue(getDistMetricValue(point, valueMode, barMetric))}</div>`);
       }
       seriesList.forEach((item, index) => {
         let displayValue = item.value;
         if ((collapseNewOnly || stackSecond) && second && point) {
-          if (index === 0) displayValue = point.units || point.count;
-          if (index === 1) displayValue = point.extra || 0;
+          if (index === 0) displayValue = getDistMetricValue(point, valueMode, barMetric);
+          if (index === 1) displayValue = getDistNewMetricValue(point, valueMode);
         }
-        lines.push(`<div>${item.marker}${item.seriesName}: ${displayValue}${item.seriesName === line ? "%" : ""}</div>`);
+        const numericValue = Number(displayValue ?? 0);
+        const displayText = item.seriesName === line
+          ? `${numericValue}%`
+          : formatBarValue(numericValue);
+        lines.push(`<div>${item.marker}${item.seriesName}: ${displayText}</div>`);
       });
       return lines.join("");
     },
@@ -732,8 +835,8 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
       barMaxWidth:24,
       stack: (collapseNewOnly || stackSecond) && second ? "single-bar" : undefined,
       data:points.map((i) => {
-        const totalValue = barMetric === "count" ? i.count : (i.units || i.count);
-        const newValue = i.extra || 0;
+        const totalValue = getDistMetricValue(i, valueMode, barMetric);
+        const newValue = getDistNewMetricValue(i, valueMode);
         if (collapseNewOnly && second && newValue >= totalValue) return 0;
         if (stackSecond && second) return Math.max(totalValue - newValue, 0);
         return totalValue;
@@ -745,36 +848,39 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
       type:"bar",
       barMaxWidth:24,
       stack: (collapseNewOnly || stackSecond) ? "single-bar" : undefined,
-      data:points.map(i=>i.extra || 0),
+      data:points.map((i) => getDistNewMetricValue(i, valueMode)),
       itemStyle:{ color:"#a5b4fc" },
     }] : []),
     { name:line, type:"line", yAxisIndex:1, smooth:true, data:points.map(i=>Number((i.share*100).toFixed(2))), itemStyle:{ color:"#6cc24a" }, lineStyle:{ color:"#6cc24a", width:2 } },
   ],
   };
 };
-const concentration = (mode: "product"|"brand"|"seller"): Dist[] => {
-  const total = metric.value.units || 0;
+const concentration = (mode: "product"|"brand"|"seller", metricMode: ConcentrationMetricMode): Dist[] => {
+  const total = metricMode === "amount" ? metric.value.amount : metric.value.units;
   if (!total) return [];
   if (mode === "product") {
     return [...snapshotRows.value]
-      .sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0))
+      .sort((a, b) => getRowMetricValue(b, metricMode) - getRowMetricValue(a, metricMode))
       .map((r,i)=>({
         label:formatConcentrationAxisLabel(t(r.title) || t(r.asin) || `#${i+1}`, 16, 2),
         name:t(r.title) || t(r.asin) || `#${i+1}`,
         row: r,
         count:1,
         units:n(r.totalunits)||0,
-        share:(n(r.totalunits)||0)/total,
-        extra:isNew(r)?(n(r.totalunits)||0):0,
+        amount:n(r.totalamount)||0,
+        share:getRowMetricValue(r, metricMode)/total,
+        extra:getRowNewMetricValue(r, "units"),
+        newAmount:getRowNewMetricValue(r, "amount"),
       }));
   }
   return group(snapshotRows.value, mode === "brand" ? "brand" : "sellername")
+    .sort((a, b) => (metricMode === "amount" ? b.amount - a.amount : b.units - a.units))
     .map((r, i) => ({
       label: formatConcentrationAxisLabel(r.name, mode === "brand" ? 10 : 12, 2),
       name: r.name,
       count: r.count,
       units: r.units,
-      share: r.share,
+      share: (metricMode === "amount" ? r.amount : r.units) / total,
       extra: r.newUnits,
       amount: r.amount,
       newAmount: r.newAmount,
@@ -788,9 +894,45 @@ const sellerNationLabel = (value: unknown) => {
   if (!code || code === "UNKNOWN") return "未知";
   return SELLER_NATION_ZH[code] || code;
 };
-const productOption = computed(() => lineBar(concentration("product"), "销量", "销量占比", "新品销量", true, true, true, false, "units", true));
-const brandOption = computed(() => lineBar(concentration("brand"), "销量", "销量占比", "新品销量", true, false, true, true, "units", true));
-const sellerOption = computed(() => lineBar(concentration("seller"), "销量", "销量占比", "新品销量", true, false, true, true, "units", true));
+const productOption = computed(() => lineBar(
+  concentration("product", productConcentrationMetric.value),
+  productConcentrationMetric.value === "amount" ? "销售额" : "销量",
+  topShareLabel(productConcentrationMetric.value),
+  productConcentrationMetric.value === "amount" ? "新品销售额" : "新品销量",
+  true,
+  true,
+  true,
+  false,
+  "units",
+  true,
+  productConcentrationMetric.value,
+));
+const brandOption = computed(() => lineBar(
+  concentration("brand", brandConcentrationMetric.value),
+  brandConcentrationMetric.value === "amount" ? "销售额" : "销量",
+  topShareLabel(brandConcentrationMetric.value),
+  brandConcentrationMetric.value === "amount" ? "新品销售额" : "新品销量",
+  true,
+  false,
+  true,
+  true,
+  "units",
+  true,
+  brandConcentrationMetric.value,
+));
+const sellerOption = computed(() => lineBar(
+  concentration("seller", sellerConcentrationMetric.value),
+  sellerConcentrationMetric.value === "amount" ? "销售额" : "销量",
+  topShareLabel(sellerConcentrationMetric.value),
+  sellerConcentrationMetric.value === "amount" ? "新品销售额" : "新品销量",
+  true,
+  false,
+  true,
+  true,
+  "units",
+  true,
+  sellerConcentrationMetric.value,
+));
 const salesTrendOption = computed<EChartsOption>(() => ({
   grid:{ left:50,right:56,top:28,bottom:44,containLabel:true },
   tooltip:{
@@ -1276,11 +1418,45 @@ onMounted(async () => {
   margin-bottom: 14px;
 }
 
+.report-panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .report-panel-header h3,
 .report-card-title {
   margin: 0;
   font-size: 1.05rem;
   color: #132542;
+}
+
+.report-segmented {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid #d7e5ff;
+  background: #f7faff;
+}
+
+.report-segmented-btn {
+  border: 0;
+  background: transparent;
+  color: #526581;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.report-segmented-btn.active {
+  background: #ffffff;
+  color: #1f55c6;
+  box-shadow: 0 1px 2px rgba(18, 32, 60, 0.08);
 }
 
 .report-chip {
