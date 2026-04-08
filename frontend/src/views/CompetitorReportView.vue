@@ -156,9 +156,9 @@
       <section class="report-panel"><div class="report-panel-header"><h3>行业销售趋势</h3></div><ReportChart :option="salesTrendOption" height="360px" /></section>
 
       <section class="report-grid">
-        <article class="report-panel"><div class="report-panel-header"><h3>商品集中度</h3><span class="report-chip">TOP10 {{ formatPercent(productTop10Share) }}</span></div><ReportChart :option="productOption" height="320px" @chart-click="openProductAmazon" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>品牌集中度</h3><span class="report-chip">TOP10 {{ formatPercent(brandTop10Share) }}</span></div><ReportChart :option="brandOption" height="320px" @chart-click="openBrandBucketModal" /></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家集中度</h3><span class="report-chip">TOP10 {{ formatPercent(sellerTop10Share) }}</span></div><ReportChart :option="sellerOption" height="320px" @chart-click="openSellerBucketModal" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>商品集中度</h3><span class="report-chip">TOP50 {{ formatPercent(productTop50Share) }}</span></div><ReportChart :option="productOption" height="320px" @chart-click="openProductAmazon" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>品牌集中度</h3><span class="report-chip">TOP50 {{ formatPercent(brandTop50Share) }}</span></div><ReportChart :option="brandOption" height="320px" @chart-click="openBrandBucketModal" /></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>卖家集中度</h3><span class="report-chip">TOP50 {{ formatPercent(sellerTop50Share) }}</span></div><ReportChart :option="sellerOption" height="320px" @chart-click="openSellerBucketModal" /></article>
       </section>
 
       <section class="report-grid report-grid-2">
@@ -230,6 +230,7 @@ type CategoryOption = { path: string; locale: string };
 const CATEGORY_TEDDY = "Toys & Games:Stuffed Animals & Plush Toys:Stuffed Animals & Teddy Bears";
 const CATEGORY_PILLOWS = "Toys & Games:Stuffed Animals & Plush Toys:Plush Pillows";
 const CATEGORY_ALL = "ALL";
+const CONCENTRATION_TOP_LIMIT = 50;
 const NIUNIU_DADDY_BRAND_KEY = "niuniudaddy";
 const REPORT_COLUMNS = [
   "asin",
@@ -428,7 +429,9 @@ function renderAggregateInfoCard(point: Dist, options: { rank: number; dataIndex
   }
   return options.root;
 }
-const priceBucketModalOption = computed<EChartsOption>(() => ({
+const priceBucketModalOption = computed<EChartsOption>(() => {
+  const zoomEndValue = Math.max(0, Math.min(CONCENTRATION_TOP_LIMIT, priceBucketModalPoints.value.length) - 1);
+  return ({
   grid: { left: 56, right: 52, top: 42, bottom: 96, containLabel: true },
   tooltip: {
     trigger: "axis",
@@ -452,8 +455,8 @@ const priceBucketModalOption = computed<EChartsOption>(() => ({
     { type: "value", name: "销量占比", axisLabel: { formatter: "{value}%" } },
   ],
   dataZoom: [
-    { type: "inside", xAxisIndex: 0, start: 0, end: 100 },
-    { type: "slider", xAxisIndex: 0, height: 28, bottom: 30, start: 0, end: 100 },
+    { type: "inside", xAxisIndex: 0, startValue: 0, endValue: zoomEndValue, filterMode: "filter" },
+    { type: "slider", xAxisIndex: 0, height: 28, bottom: 30, startValue: 0, endValue: zoomEndValue, filterMode: "filter" },
   ],
   series: [
     {
@@ -482,7 +485,7 @@ const priceBucketModalOption = computed<EChartsOption>(() => ({
       lineStyle: { color: "#6cc24a", width: 2 },
     },
   ],
-}));
+})});
 const n = (v: unknown) => v === null || v === undefined || v === "" ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
 const t = (v: unknown) => v === null || v === undefined ? "" : String(v).trim();
 const avg = (arr: Array<number | null>) => { const x = arr.filter((v): v is number => typeof v === "number"); return x.length ? x.reduce((a,b)=>a+b,0)/x.length : null; };
@@ -498,6 +501,12 @@ const fp = (v: number | null) => v === null || Number.isNaN(v) ? "-" : `${(v*100
 const fw = (v: number | null) => v === null || Number.isNaN(v) ? "-" : `${(v/10000).toLocaleString("en-US", { maximumFractionDigits: 1 })} 万美元`;
 const fwn = (v: number | null) => v === null || Number.isNaN(v) ? "-" : (v/10000).toLocaleString("en-US", { maximumFractionDigits: 1 });
 const fdate = (v: number | null) => !v ? "-" : new Date(v).toISOString().slice(0,10);
+function formatConcentrationAxisLabel(value: unknown, limit = 18): string {
+  const text = t(value).replace(/\s+/g, " ").trim();
+  if (!text) return "-";
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(limit - 1, 1))}…`;
+}
 const formatInteger = fi;
 const formatCurrency = fc;
 const formatPercent = fp;
@@ -594,7 +603,7 @@ const isNew = (row: Row) => (n(row.availabledays) ?? 999999) <= newProductDayLim
 const metric = computed(() => { const rows = snapshotRows.value, dates = rows.map(dateMs).filter((v): v is number => v !== null).sort((a,b)=>a-b), newRows = rows.filter(isNew), ratings = newRows.map(r=>n(r.rating)).filter((v): v is number => v !== null); return { total:rows.length, brands:new Set(rows.map(r=>t(r.brand)).filter(Boolean)).size, sellers:new Set(rows.map(r=>t(r.sellername)).filter(Boolean)).size, units:sum(rows.map(r=>n(r.totalunits))), amount:sum(rows.map(r=>n(r.totalamount))), avgBsr:avg(rows.map(r=>n(r.bsrrank))), avgPrice:avg(rows.map(r=>n(r.price))), avgReviewGrow:avg(rows.map(r=>n(r.reviewsdelta))), avgReviews:avg(rows.map(r=>n(r.reviews))), avgRating:avg(rows.map(r=>n(r.rating))), avgSellerCount:avg(rows.map(r=>n(r.sellers))), newRows, newCount:newRows.length, newRatio:rows.length ? newRows.length/rows.length : 0, newAvgPrice:avg(newRows.map(r=>n(r.price))), newAvgRating:avg(newRows.map(r=>n(r.rating))), newMax:ratings.length ? Math.max(...ratings) : null, newMin:ratings.length ? Math.min(...ratings) : null, newUnits:sum(newRows.map(r=>n(r.totalunits))), newAmount:sum(newRows.map(r=>n(r.totalamount))), firstDate:dates[0] ?? null, lastDate:dates.at(-1) ?? null, fbaRatio:rows.length ? rows.filter(r=>t(r.sellertype).toUpperCase()==="FBA").length/rows.length : 0, videoRatio:rows.length ? rows.filter(r=>yes(r.video)).length/rows.length : 0, ebcRatio:rows.length ? rows.filter(r=>yes(r.ebc)).length/rows.length : 0 }; });
 const topProducts = computed(() => [...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, topProductCount.value));
 const brandRank = computed(() => group(snapshotRows.value, "brand").slice(0,10)), sellerRank = computed(() => group(snapshotRows.value, "sellername").slice(0,10));
-const productTop10Share = computed(() => metric.value.units ? sum(topProducts.value.map(r=>n(r.totalunits)))/metric.value.units : 0), brandTop10Share = computed(() => metric.value.units ? sum(brandRank.value.map(r=>r.units))/metric.value.units : 0), sellerTop10Share = computed(() => metric.value.units ? sum(sellerRank.value.map(r=>r.units))/metric.value.units : 0);
+const productTop50Share = computed(() => metric.value.units ? sum([...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, CONCENTRATION_TOP_LIMIT).map(r=>n(r.totalunits)))/metric.value.units : 0), brandTop50Share = computed(() => metric.value.units ? sum(group(snapshotRows.value, "brand").slice(0, CONCENTRATION_TOP_LIMIT).map(r=>r.units))/metric.value.units : 0), sellerTop50Share = computed(() => metric.value.units ? sum(group(snapshotRows.value, "sellername").slice(0, CONCENTRATION_TOP_LIMIT).map(r=>r.units))/metric.value.units : 0);
 const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"当月销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
 const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"当月总销量", value:fi(metric.value.units) }, { label:"当月总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"当月评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
 const topRows = computed<Metric[]>(() => {
@@ -634,8 +643,18 @@ const yearTable = computed(() => [...new Set(historyByMonth.value.map((r) => Mat
     });
     return { year, monthMap, total: rows.reduce((acc, item) => acc + item.amount, 0) };
   }));
-const lineBar = (points: Dist[], bar: string, line: string, second?: string, rankLabel = false, collapseNewOnly = false, enableZoom = false, stackSecond = false, barMetric: "units" | "count" = "units"): EChartsOption => ({
-  grid:{ left:50,right:48,top:28,bottom:enableZoom ? 96 : 58,containLabel:true },
+const lineBar = (points: Dist[], bar: string, line: string, second?: string, rankLabel = false, collapseNewOnly = false, enableZoom = false, stackSecond = false, barMetric: "units" | "count" = "units", showAllLabels = false): EChartsOption => {
+  const initialZoomEndValue = Math.max(
+    0,
+    Math.min(showAllLabels ? CONCENTRATION_TOP_LIMIT : 30, points.length) - 1,
+  );
+  const formatZoomIndex = (value: number | string) => {
+    const index = Number(value);
+    if (!Number.isFinite(index)) return "-";
+    return String(Math.max(1, Math.min(points.length, Math.round(index) + 1)));
+  };
+  return {
+  grid:{ left:50,right:48,top:28,bottom:showAllLabels ? (enableZoom ? 72 : 56) : (enableZoom ? 96 : 58),containLabel:true },
   tooltip:{
     trigger:"axis",
     confine: true,
@@ -700,11 +719,11 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
     },
   },
   legend:{ top:0, data:[bar, ...(second ? [second] : []), line] },
-  xAxis:{ type:"category", data:points.map(i=>i.label), axisLabel:{ interval:0, rotate: rankLabel ? 0 : points.length > 10 ? 60 : 0 } },
+  xAxis:{ type:"category", data:points.map(i=>i.label), axisLabel:{ interval: showAllLabels ? "auto" : 0, hideOverlap: showAllLabels, fontSize: showAllLabels ? 10 : 11, margin: showAllLabels ? 6 : 8, rotate: showAllLabels ? 45 : (rankLabel ? 0 : points.length > 10 ? 60 : 0) } },
   yAxis:[{ type:"value", name:bar }, { type:"value", name:"占比", axisLabel:{ formatter:"{value}%" } }],
   dataZoom: enableZoom ? [
-    { type:"inside", xAxisIndex: 0, start: 0, end: Math.min(100, points.length > 0 ? Math.max(12, (30 / points.length) * 100) : 100) },
-    { type:"slider", xAxisIndex: 0, height: 28, bottom: 30, start: 0, end: Math.min(100, points.length > 0 ? Math.max(12, (30 / points.length) * 100) : 100) },
+    { type:"inside", xAxisIndex: 0, startValue: 0, endValue: initialZoomEndValue, filterMode:"filter" },
+    { type:"slider", xAxisIndex: 0, height: 26, bottom: showAllLabels ? 6 : 30, startValue: 0, endValue: initialZoomEndValue, filterMode:"filter", labelFormatter: formatZoomIndex },
   ] : undefined,
   series:[
     {
@@ -731,7 +750,8 @@ const lineBar = (points: Dist[], bar: string, line: string, second?: string, ran
     }] : []),
     { name:line, type:"line", yAxisIndex:1, smooth:true, data:points.map(i=>Number((i.share*100).toFixed(2))), itemStyle:{ color:"#6cc24a" }, lineStyle:{ color:"#6cc24a", width:2 } },
   ],
-});
+  };
+};
 const concentration = (mode: "product"|"brand"|"seller"): Dist[] => {
   const total = metric.value.units || 0;
   if (!total) return [];
@@ -739,7 +759,7 @@ const concentration = (mode: "product"|"brand"|"seller"): Dist[] => {
     return [...snapshotRows.value]
       .sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0))
       .map((r,i)=>({
-        label:String(i+1),
+        label:formatConcentrationAxisLabel(t(r.title) || t(r.asin) || `#${i+1}`, 16, 2),
         name:t(r.title) || t(r.asin) || `#${i+1}`,
         row: r,
         count:1,
@@ -750,7 +770,7 @@ const concentration = (mode: "product"|"brand"|"seller"): Dist[] => {
   }
   return group(snapshotRows.value, mode === "brand" ? "brand" : "sellername")
     .map((r, i) => ({
-      label: String(i + 1),
+      label: formatConcentrationAxisLabel(r.name, mode === "brand" ? 10 : 12, 2),
       name: r.name,
       count: r.count,
       units: r.units,
@@ -768,9 +788,9 @@ const sellerNationLabel = (value: unknown) => {
   if (!code || code === "UNKNOWN") return "未知";
   return SELLER_NATION_ZH[code] || code;
 };
-const productOption = computed(() => lineBar(concentration("product"), "销量", "销量占比", "新品销量", true, true, true));
-const brandOption = computed(() => lineBar(concentration("brand"), "销量", "销量占比", "新品销量", true, false, true, true));
-const sellerOption = computed(() => lineBar(concentration("seller"), "销量", "销量占比", "新品销量", true, false, true, true));
+const productOption = computed(() => lineBar(concentration("product"), "销量", "销量占比", "新品销量", true, true, true, false, "units", true));
+const brandOption = computed(() => lineBar(concentration("brand"), "销量", "销量占比", "新品销量", true, false, true, true, "units", true));
+const sellerOption = computed(() => lineBar(concentration("seller"), "销量", "销量占比", "新品销量", true, false, true, true, "units", true));
 const salesTrendOption = computed<EChartsOption>(() => ({
   grid:{ left:50,right:56,top:28,bottom:44,containLabel:true },
   tooltip:{
