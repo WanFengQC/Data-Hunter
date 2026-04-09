@@ -13,5 +13,4 @@ COPY . /app
 
 EXPOSE 8000
 
-# Keep a single process because the app starts APScheduler in lifespan.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

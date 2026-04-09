@@ -9,7 +9,7 @@
 技术栈：
 - 后端：FastAPI
 - 前端：Vue 3 + Vite + ECharts
-- 数据库：MongoDB + PostgreSQL
+- 数据库：PostgreSQL
 - 部署：Docker / Docker Compose
 
 ## 目录结构
@@ -50,7 +50,6 @@ data_hunter/
 本地开发建议：
 - Python 3.12
 - Node.js 22
-- MongoDB
 - PostgreSQL
 
 ## 配置文件
@@ -64,9 +63,6 @@ data_hunter/
 APP_NAME=Data Hunter API
 APP_ENV=dev
 API_PREFIX=/api/v1
-
-MONGO_URI=mongodb://admin:123456@192.168.110.107:27017/?authSource=admin
-MONGO_DB=testdb
 
 PG_HOST=192.168.110.107
 PG_USER=postgres
@@ -166,7 +162,7 @@ cp backend/.env.example backend/.env
 再编辑：
 - [backend/.env](C:\Users\EDY\WebstormProjects\data_hunter\backend\.env)
 
-确认 `MONGO_URI`、`PG_HOST`、`PG_DB` 等连接信息正确。
+确认 `PG_HOST`、`PG_DB` 等连接信息正确。
 
 ### 4. 启动
 
@@ -256,7 +252,7 @@ PG_DB=hunter_new
 
 重点检查：
 - 后端是否正常启动
-- `backend/.env` 里的 MongoDB / PostgreSQL 配置是否可连
+- `backend/.env` 里的 PostgreSQL 配置是否可连
 - Docker 部署时 `backend` 容器日志是否报错
 
 ### 前端没有数据
@@ -278,4 +274,4 @@ docker compose -f docker-compose.prod.yml logs -f
 - 开发环境和生产环境配置分离
 - 将敏感信息从仓库配置中移出
 - 为词频处理脚本补充统一入口和参数说明
-- 为 Docker 生产环境增加 MongoDB / PostgreSQL 的可选编排
+- 为 Docker 生产环境补充 PostgreSQL 相关编排说明

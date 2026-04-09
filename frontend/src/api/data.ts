@@ -4,19 +4,9 @@ import type {
   PgFilterOption,
   PgFilterOptionsResponse,
   PgItemsResponse,
-  ProcessedSummary,
   WordFrequencyTrendResponse,
   YearMonthsResponse,
 } from "@/types/data";
-
-export async function fetchProcessedSummary(): Promise<ProcessedSummary> {
-  const { data } = await apiClient.get<ProcessedSummary>("/data/processed/summary");
-  return data;
-}
-
-export async function triggerCrawlPipeline(): Promise<void> {
-  await apiClient.post("/crawl/trigger");
-}
 
 const YEAR_MONTHS_TIMEOUT_MS = 120000;
 const YEAR_MONTHS_CACHE_TTL_MS = 5 * 60 * 1000;
