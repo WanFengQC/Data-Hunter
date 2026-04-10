@@ -320,6 +320,8 @@ const SELLER_NATION_ZH: Record<string, string> = {
 };
 const route = useRoute(), router = useRouter(), loading = ref(true), loadingText = ref("准备数据..."), error = ref(""), allRows = ref<Row[]>([]), activeCategoryPath = ref(""), monthHeaders = [1,2,3,4,5,6,7,8,9,10,11,12];
 const selectedYear = computed(() => Number(route.query.year || 0) || 0), selectedMonth = computed(() => Number(route.query.month || 0) || 0);
+const selectedBrand = computed(() => String(route.query.brand || "").trim());
+const selectedAsin = computed(() => String(route.query.asin || "").trim());
 const switchingFilters = ref(false);
 const productConcentrationMetric = ref<ConcentrationMetricMode>("units");
 const brandConcentrationMetric = ref<ConcentrationMetricMode>("units");
@@ -594,6 +596,7 @@ function normalizeBrandKey(value: unknown): string {
 function applyReportRowPatches(rows: Row[]): Row[] {
   return rows.filter((row) => {
     if (normalizeBrandKey(row.brand) !== NIUNIU_DADDY_BRAND_KEY) return true;
+    if (ym(row) !== 202602) return true;
     return t(row.parent).toUpperCase() !== t(row.asin).toUpperCase();
   });
 }
@@ -1106,6 +1109,10 @@ async function loadAllRows() {
     sortBy: "year_month",
     sortDir: "asc",
     columns: REPORT_COLUMNS,
+    textFilters: {
+      ...(selectedBrand.value ? { brand: selectedBrand.value } : {}),
+      ...(selectedAsin.value ? { asin: selectedAsin.value } : {}),
+    },
   });
   allRows.value = data.items || [];
 }
@@ -1236,7 +1243,15 @@ function openProductAmazon(params: unknown) {
   window.open(amazonUrl(asin), "_blank", "noopener,noreferrer");
 }
 const exportReport = () => window.print();
-const goBack = () => router.push({ name:"competitors", query:{ year:selectedYear.value || undefined, month:selectedMonth.value || undefined } });
+const goBack = () => router.push({
+  name:"competitors",
+  query:{
+    year:selectedYear.value || undefined,
+    month:selectedMonth.value || undefined,
+    brand:selectedBrand.value || undefined,
+    asin:selectedAsin.value || undefined,
+  },
+});
 onMounted(async () => {
   loading.value = true;
   error.value = "";

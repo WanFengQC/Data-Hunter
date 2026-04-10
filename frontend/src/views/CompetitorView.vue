@@ -2,6 +2,24 @@
   <main class="dashboard competitor-page">
     <section class="table-panel competitor-panel">
       <div class="table-filters toolbar-filters competitor-filters">
+        <label class="toolbar-search-field">
+          品牌
+          <input
+            v-model.trim="brandKeywordInput"
+            type="text"
+            placeholder="搜索品牌"
+            @keydown.enter.prevent="applyQuickSearch"
+          />
+        </label>
+        <label class="toolbar-search-field">
+          ASIN
+          <input
+            v-model.trim="asinKeywordInput"
+            type="text"
+            placeholder="搜索 ASIN"
+            @keydown.enter.prevent="applyQuickSearch"
+          />
+        </label>
         <label>
           年份
           <select v-model.number="selectedYear">
@@ -35,6 +53,10 @@
             <option value="asc">升序</option>
           </select>
         </label>
+        <button class="secondary-btn" type="button" @click="applyQuickSearch">搜索</button>
+        <button class="secondary-btn" type="button" @click="resetQuickSearch" :disabled="!hasQuickSearch">
+          清空搜索
+        </button>
         <button class="secondary-btn" type="button" @click="exportCsv" :disabled="!total || exportLoading">
           {{ exportLoading ? "导出中..." : "导出 CSV" }}
         </button>
@@ -378,7 +400,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   createPgExportJob,
@@ -394,6 +416,7 @@ import type { PgFilterOption, PgTrendPoint } from "@/types/data";
 
 const LONG_PRESS_MS = 220;
 const TARGET_TABLE = "seller_sprite_competitor_items";
+const route = useRoute();
 const router = useRouter();
 
 type TextFilterOp =
@@ -472,10 +495,10 @@ const loadingMore = ref(false);
 const exportLoading = ref(false);
 const error = ref("");
 const yearMonthOptions = ref<number[]>([]);
-const DEFAULT_YEAR = 2026;
-const DEFAULT_MONTH = 2;
-const selectedYear = ref(DEFAULT_YEAR);
-const selectedMonth = ref(DEFAULT_MONTH);
+const selectedYear = ref(0);
+const selectedMonth = ref(0);
+const brandKeywordInput = ref("");
+const asinKeywordInput = ref("");
 
 const orderedColumns = ref<string[]>(COLUMN_DEFS.map((item) => item.key));
 const textFilters = ref<Record<string, TextFilterValue>>({});
@@ -528,6 +551,7 @@ const displayColumns = computed(() => {
   return [...ordered, ...missing];
 });
 const hasMoreRows = computed(() => rows.value.length < total.value);
+const hasQuickSearch = computed(() => brandKeywordInput.value.length > 0 || asinKeywordInput.value.length > 0);
 const workingFilterSet = computed(() => new Set(workingFilterValues.value));
 const visibleFilterOptions = computed(() => filterOptions.value);
 const filterRuleNeedsValue = computed(
@@ -750,8 +774,35 @@ function openReport(): void {
     query: {
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
+      brand: brandKeywordInput.value || undefined,
+      asin: asinKeywordInput.value || undefined,
     },
   });
+}
+
+function syncQuickSearchFilters(): void {
+  const brand = brandKeywordInput.value.trim();
+  const asin = asinKeywordInput.value.trim();
+
+  if (brand) textFilters.value.brand = brand;
+  else delete textFilters.value.brand;
+
+  if (asin) textFilters.value.asin = asin;
+  else delete textFilters.value.asin;
+}
+
+function applyQuickSearch(): void {
+  syncQuickSearchFilters();
+  page.value = 1;
+  void reloadTable();
+}
+
+function resetQuickSearch(): void {
+  brandKeywordInput.value = "";
+  asinKeywordInput.value = "";
+  syncQuickSearchFilters();
+  page.value = 1;
+  void reloadTable();
 }
 
 async function exportCsv(): Promise<void> {
@@ -966,6 +1017,59 @@ async function loadYearMonths(): Promise<void> {
     yearMonthOptions.value = [];
     error.value = "年月筛选加载失败，请稍后重试";
   }
+}
+
+function toValidQueryNumber(value: unknown): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function applyInitialYearMonth(): void {
+  const options = yearMonthOptions.value;
+  brandKeywordInput.value = String(route.query.brand || "").trim();
+  asinKeywordInput.value = String(route.query.asin || "").trim();
+  syncQuickSearchFilters();
+  if (!options.length) {
+    selectedYear.value = 0;
+    selectedMonth.value = 0;
+    return;
+  }
+
+  const queryYear = toValidQueryNumber(route.query.year);
+  const queryMonth = toValidQueryNumber(route.query.month);
+  const latest = options[0];
+  const latestYear = Math.floor(latest / 100);
+  const latestMonth = latest % 100;
+
+  if (queryYear && queryMonth) {
+    const target = queryYear * 100 + queryMonth;
+    if (options.includes(target)) {
+      selectedYear.value = queryYear;
+      selectedMonth.value = queryMonth;
+      return;
+    }
+  }
+
+  if (queryYear) {
+    const sameYear = options.find((value) => Math.floor(value / 100) === queryYear);
+    if (sameYear) {
+      selectedYear.value = queryYear;
+      selectedMonth.value = sameYear % 100;
+      return;
+    }
+  }
+
+  if (queryMonth) {
+    const sameMonth = options.find((value) => value % 100 === queryMonth);
+    if (sameMonth) {
+      selectedYear.value = Math.floor(sameMonth / 100);
+      selectedMonth.value = queryMonth;
+      return;
+    }
+  }
+
+  selectedYear.value = latestYear;
+  selectedMonth.value = latestMonth;
 }
 
 async function loadTable(options: { append?: boolean } = {}): Promise<void> {
@@ -1279,11 +1383,7 @@ watch(
 onMounted(async () => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   await loadYearMonths();
-  const hasDefaultYearMonth = yearMonthOptions.value.includes(DEFAULT_YEAR * 100 + DEFAULT_MONTH);
-  if (!hasDefaultYearMonth) {
-    selectedYear.value = 0;
-    selectedMonth.value = 0;
-  }
+  applyInitialYearMonth();
   await reloadTable();
 });
 
@@ -1326,6 +1426,21 @@ onBeforeUnmount(() => {
 
 .toolbar-filters select {
   min-width: 100px;
+}
+
+.toolbar-search-field input {
+  min-width: 160px;
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.toolbar-search-field input:focus {
+  outline: none;
+  border-color: #3f6fda;
+  box-shadow: 0 0 0 3px rgba(63, 111, 218, 0.16);
 }
 
 .competitor-panel {

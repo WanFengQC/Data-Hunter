@@ -206,11 +206,11 @@ firewall-cmd --reload
 - `backend/scripts/seller_sprite/`
 
 常见用途：
-- `get_pages.py`：抓 ABA 原始数据
-- `import_items_to_postgres.py`：导入 ABA 数据到 PostgreSQL
-- `get_keywords.py`：生成词频 CSV
-- `import_word_frequency_to_postgres.py`：导入词频 CSV 到 PostgreSQL
-- `calc_word_frequency_growth.py`：计算月度/季度增长率
+- `get_aba.py`：总控入口，通过文件顶部开关控制“抓页面 / 导 ABA 表 / 生成词频 / 导词频表”
+- 抓取目标在 `get_aba.py` 顶部变量里配置：`TARGET_MONTHS = ["202502", "202501"]`
+- 如需直接指定原始表名，可配置：`TARGET_TABLES = ["ara_202502", "ara_202501"]`
+- 配好变量后直接运行：`python .\backend\scripts\seller_sprite\get_aba.py`
+- `import_items_to_postgres.py`：单独重跑 ABA 数据导入时使用
 
 ## 数据说明
 
