@@ -14,6 +14,8 @@ from app.services.postgres_table import (
     fetch_filter_options,
     fetch_growth_top10_items,
     fetch_items,
+    fetch_weighted_blankets_pounds_detail,
+    fetch_weighted_blankets_pounds_summary,
     fetch_word_frequency_trend,
     stream_items_csv,
     fetch_year_months,
@@ -100,6 +102,54 @@ def get_word_frequency_trend(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/weighted-blankets/pounds-summary")
+def get_weighted_blankets_pounds_summary(
+    view: str = Query(default="yearly"),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="weighted_blankets_competitor_items"),
+) -> dict:
+    try:
+        return fetch_weighted_blankets_pounds_summary(
+            schema_name=schema,
+            table_name=table,
+            view=view,
+            year=year,
+            month=month,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/weighted-blankets/pounds-detail")
+def get_weighted_blankets_pounds_detail(
+    pounds: float = Query(..., gt=0),
+    view: str = Query(default="yearly"),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    limit: int = Query(default=100, ge=1, le=300),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="weighted_blankets_competitor_items"),
+) -> dict:
+    try:
+        return fetch_weighted_blankets_pounds_detail(
+            schema_name=schema,
+            table_name=table,
+            pounds=pounds,
+            view=view,
+            year=year,
+            month=month,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/growth-top10")
 def get_growth_top10(
     mode: str = Query(default="monthly"),
@@ -107,7 +157,8 @@ def get_growth_top10(
     month: int | None = Query(default=None, ge=1, le=12),
     search_min: float | None = Query(default=None, ge=0),
     search_max: float | None = Query(default=None, ge=0),
-    limit: int = Query(default=10, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
     schema: str = Query(default=settings.pg_schema),
     table: str = Query(default="seller_sprite_word_frequency"),
 ) -> dict:
@@ -125,7 +176,8 @@ def get_growth_top10(
             month=month,
             search_min=search_min,
             search_max=search_max,
-            limit=limit,
+            page=page,
+            page_size=page_size,
         )
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc

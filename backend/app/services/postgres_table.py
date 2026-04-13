@@ -2,9 +2,11 @@ import csv
 import json
 import re
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
+from queue import Empty, Full, LifoQueue
 from threading import Lock
 from time import monotonic
 from typing import Any
@@ -33,28 +35,114 @@ _YEAR_MONTHS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _YEAR_MONTHS_CACHE_LOCK = Lock()
 _YEAR_MONTH_INDEX_ATTEMPTS: set[tuple[str, str]] = set()
 _YEAR_MONTH_INDEX_ATTEMPTS_LOCK = Lock()
+_PG_POOL_LOCK = Lock()
+_PG_POOL_QUEUE: LifoQueue[psycopg.Connection] = LifoQueue()
+_PG_POOL_SIZE = 0
 
 
-def pg_connect() -> psycopg.Connection:
+def _open_pg_connection(*, autocommit: bool = False, row_factory: Any = dict_row) -> psycopg.Connection:
     return psycopg.connect(
         host=settings.pg_host,
         user=settings.pg_user,
         password=settings.pg_pass,
         port=settings.pg_port,
         dbname=settings.pg_db,
-        row_factory=dict_row,
+        autocommit=autocommit,
+        row_factory=row_factory,
     )
+
+
+def _discard_pooled_connection(conn: psycopg.Connection | None) -> None:
+    global _PG_POOL_SIZE
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    with _PG_POOL_LOCK:
+        _PG_POOL_SIZE = max(0, _PG_POOL_SIZE - 1)
+
+
+@contextmanager
+def pg_connect() -> Iterator[psycopg.Connection]:
+    global _PG_POOL_SIZE
+    conn: psycopg.Connection | None = None
+
+    while conn is None:
+        try:
+            candidate = _PG_POOL_QUEUE.get_nowait()
+        except Empty:
+            candidate = None
+
+        if candidate is not None:
+            if candidate.closed or getattr(candidate, "broken", False):
+                _discard_pooled_connection(candidate)
+                continue
+            conn = candidate
+            break
+
+        should_create = False
+        with _PG_POOL_LOCK:
+            if _PG_POOL_SIZE < max(settings.pg_pool_min_size, settings.pg_pool_max_size):
+                _PG_POOL_SIZE += 1
+                should_create = True
+
+        if should_create:
+            try:
+                conn = _open_pg_connection()
+            except Exception:
+                with _PG_POOL_LOCK:
+                    _PG_POOL_SIZE = max(0, _PG_POOL_SIZE - 1)
+                raise
+            break
+
+        try:
+            candidate = _PG_POOL_QUEUE.get(timeout=settings.pg_pool_wait_timeout_seconds)
+        except Empty as exc:
+            raise TimeoutError("Timed out waiting for PostgreSQL connection from pool") from exc
+
+        if candidate.closed or getattr(candidate, "broken", False):
+            _discard_pooled_connection(candidate)
+            continue
+        conn = candidate
+
+    try:
+        yield conn
+    finally:
+        if conn is None:
+            return
+        if conn.closed or getattr(conn, "broken", False):
+            _discard_pooled_connection(conn)
+            return
+        try:
+            conn.rollback()
+        except Exception:
+            _discard_pooled_connection(conn)
+            return
+        try:
+            _PG_POOL_QUEUE.put_nowait(conn)
+        except Full:
+            _discard_pooled_connection(conn)
 
 
 def _pg_connect_autocommit() -> psycopg.Connection:
-    return psycopg.connect(
-        host=settings.pg_host,
-        user=settings.pg_user,
-        password=settings.pg_pass,
-        port=settings.pg_port,
-        dbname=settings.pg_db,
-        autocommit=True,
-    )
+    return _open_pg_connection(autocommit=True, row_factory=None)
+
+
+def close_pg_pool() -> None:
+    global _PG_POOL_SIZE
+    while True:
+        try:
+            conn = _PG_POOL_QUEUE.get_nowait()
+        except Empty:
+            break
+        try:
+            conn.close()
+        except Exception:
+            pass
+    with _PG_POOL_LOCK:
+        _PG_POOL_SIZE = 0
+
 
 def _build_table_profile(
     conn: psycopg.Connection, schema_name: str, table_name: str
@@ -692,7 +780,8 @@ def fetch_growth_top10_items(
     month: int | None = None,
     search_min: float | None = None,
     search_max: float | None = None,
-    limit: int = 10,
+    page: int = 1,
+    page_size: int = 10,
     tag_label: str = "2外形",
 ) -> dict[str, Any]:
     sort_by_map = {
@@ -701,7 +790,9 @@ def fetch_growth_top10_items(
         "searches": "total_searches",
     }
     sort_by = sort_by_map.get(str(mode).lower(), "total_searches_growth_rate")
-    limit = max(1, min(int(limit or 10), 100))
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 10), 100))
+    offset = (page - 1) * page_size
 
     text_filters: dict[str, Any] = {
         "标签": {"op": "equals", "value": tag_label},
@@ -721,8 +812,8 @@ def fetch_growth_top10_items(
                 "columns": [],
                 "items": [],
                 "total": 0,
-                "page": 1,
-                "page_size": limit,
+                "page": page,
+                "page_size": page_size,
                 "average_total_searches": None,
                 "average_label": "平均总搜索量",
             }
@@ -752,7 +843,13 @@ def fetch_growth_top10_items(
             )
             + where_sql
             + order_sql
-            + sql.SQL(" LIMIT %s")
+            + sql.SQL(" LIMIT %s OFFSET %s")
+        )
+        count_query = (
+            sql.SQL("SELECT COUNT(*) AS total FROM {}.{}").format(
+                sql.Identifier(schema_name), sql.Identifier(table_name)
+            )
+            + where_sql
         )
         average_label = "当月平均总搜索量" if mode != "quarterly" else "当季平均总搜索量"
         avg_where_sql = where_sql
@@ -781,7 +878,10 @@ def fetch_growth_top10_items(
         )
 
         with conn.cursor() as cur:
-            cur.execute(data_query, [*where_params, limit])
+            cur.execute(count_query, where_params)
+            count_row = cur.fetchone()
+            total = int(count_row.get("total") or 0) if count_row else 0
+            cur.execute(data_query, [*where_params, page_size, offset])
             rows = cur.fetchall()
             cur.execute(avg_query, avg_params)
             avg_row = cur.fetchone()
@@ -832,9 +932,9 @@ def fetch_growth_top10_items(
     return {
         "columns": response_columns,
         "items": items,
-        "total": len(items),
-        "page": 1,
-        "page_size": limit,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
         "average_total_searches": avg_total_searches,
         "average_label": average_label,
     }
@@ -1468,3 +1568,310 @@ def fetch_asin_detail(
         "found": best_detail is not None,
         "detail": best_detail,
     }
+
+
+def _normalize_pounds_view(view: str | None) -> str:
+    normalized = str(view or "yearly").strip().lower()
+    if normalized not in {"yearly", "monthly"}:
+        raise ValueError("Invalid pounds view")
+    return normalized
+
+
+def _weighted_blankets_required_columns(profile: dict[str, Any]) -> bool:
+    required_columns = {
+        "asin",
+        "parent",
+        "title",
+        "brand",
+        "imageurl",
+        "weight",
+        "dimensions",
+        "sellername",
+        "price",
+        "totalunits",
+        "totalamount",
+        "year_month",
+    }
+    return required_columns.issubset(profile.get("valid_columns", set()))
+
+
+def _weighted_blankets_period_clause(view: str, year: int | None, month: int | None) -> tuple[sql.SQL, list[Any]]:
+    normalized_view = _normalize_pounds_view(view)
+    clauses: list[sql.SQL] = []
+    params: list[Any] = []
+
+    if normalized_view == "monthly":
+        if year is None or month is None:
+            raise ValueError("Monthly pounds view requires both year and month")
+        clauses.append(sql.SQL("year_month = %s"))
+        params.append(year * 100 + month)
+    elif year is not None:
+        clauses.append(sql.SQL("year_month BETWEEN %s AND %s"))
+        params.extend([year * 100, year * 100 + 99])
+
+    if not clauses:
+        return sql.SQL(""), params
+
+    return sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses), params
+
+
+def _build_weighted_blankets_scope_sql(
+    schema_name: str,
+    table_name: str,
+    view: str,
+    year: int | None,
+    month: int | None,
+) -> tuple[sql.SQL, list[Any]]:
+    period_where_sql, period_params = _weighted_blankets_period_clause(view=view, year=year, month=month)
+    base_sql = sql.SQL(
+        """
+        WITH filtered AS (
+            SELECT
+                t.*,
+                CASE
+                    WHEN substring(lower(coalesce(CAST(t.title AS TEXT), '')) FROM '([0-9]+(\.[0-9]+)?)\s*(lb|lbs|pound|pounds)') IS NOT NULL
+                    THEN CAST(substring(lower(coalesce(CAST(t.title AS TEXT), '')) FROM '([0-9]+(\.[0-9]+)?)\s*(lb|lbs|pound|pounds)') AS DOUBLE PRECISION)
+                    ELSE NULL
+                END AS pounds_value
+            FROM {}.{} t
+            {}
+        ),
+        scoped AS (
+            SELECT f.*
+            FROM filtered f
+            WHERE f.pounds_value IS NOT NULL
+              AND f.pounds_value BETWEEN 1 AND 35
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {}.{} c
+                  WHERE c.year_month = f.year_month
+                    AND trim(coalesce(CAST(c.parent AS TEXT), '')) <> ''
+                    AND upper(trim(CAST(c.parent AS TEXT))) = upper(trim(CAST(f.asin AS TEXT)))
+              )
+        )
+        """
+    ).format(
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+        period_where_sql,
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+    )
+    return base_sql, period_params
+
+
+def _format_pounds_label(value: float | None) -> str:
+    if value is None:
+        return ""
+    formatted = f"{value:.2f}".rstrip("0").rstrip(".")
+    return formatted
+
+
+def fetch_weighted_blankets_pounds_summary(
+    schema_name: str,
+    table_name: str,
+    view: str = "yearly",
+    year: int | None = None,
+    month: int | None = None,
+) -> dict[str, Any]:
+    normalized_view = _normalize_pounds_view(view)
+
+    with pg_connect() as conn:
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"] or not _weighted_blankets_required_columns(profile):
+            return {
+                "view": normalized_view,
+                "year": year,
+                "month": month,
+                "items": [],
+                "total_products": 0,
+                "total_units": 0.0,
+                "total_amount": 0.0,
+            }
+
+        scope_sql, scope_params = _build_weighted_blankets_scope_sql(
+            schema_name=schema_name,
+            table_name=table_name,
+            view=normalized_view,
+            year=year,
+            month=month,
+        )
+        query = (
+            scope_sql
+            + sql.SQL(
+                """
+                SELECT
+                    pounds_value AS pounds,
+                    COUNT(*) AS product_count,
+                    COALESCE(SUM(totalunits), 0) AS total_units,
+                    COALESCE(SUM(totalamount), 0) AS total_amount,
+                    AVG(price) AS avg_price,
+                    COUNT(DISTINCT year_month) AS active_periods
+                FROM scoped
+                GROUP BY pounds_value
+                ORDER BY pounds_value ASC
+                """
+            )
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(query, scope_params)
+            rows = cur.fetchall()
+
+    items: list[dict[str, Any]] = []
+    total_products = 0
+    total_units = 0.0
+    total_amount = 0.0
+    for row in rows:
+        pounds_value = _to_float(row.get("pounds"))
+        product_count = _to_int(row.get("product_count")) or 0
+        units_value = _to_float(row.get("total_units")) or 0.0
+        amount_value = _to_float(row.get("total_amount")) or 0.0
+        total_products += product_count
+        total_units += units_value
+        total_amount += amount_value
+        items.append(
+            {
+                "pounds": pounds_value,
+                "pounds_label": _format_pounds_label(pounds_value),
+                "product_count": product_count,
+                "total_units": units_value,
+                "total_amount": amount_value,
+                "avg_price": _to_float(row.get("avg_price")),
+                "active_periods": _to_int(row.get("active_periods")) or 0,
+            }
+        )
+
+    return {
+        "view": normalized_view,
+        "year": year,
+        "month": month,
+        "items": items,
+        "total_products": total_products,
+        "total_units": total_units,
+        "total_amount": total_amount,
+    }
+
+
+def fetch_weighted_blankets_pounds_detail(
+    schema_name: str,
+    table_name: str,
+    pounds: float,
+    view: str = "yearly",
+    year: int | None = None,
+    month: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    normalized_view = _normalize_pounds_view(view)
+    safe_limit = max(1, min(int(limit or 100), 300))
+
+    with pg_connect() as conn:
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"] or not _weighted_blankets_required_columns(profile):
+            return {
+                "view": normalized_view,
+                "year": year,
+                "month": month,
+                "pounds": pounds,
+                "pounds_label": _format_pounds_label(pounds),
+                "summary": None,
+                "products": [],
+            }
+
+        scope_sql, scope_params = _build_weighted_blankets_scope_sql(
+            schema_name=schema_name,
+            table_name=table_name,
+            view=normalized_view,
+            year=year,
+            month=month,
+        )
+        summary_query = (
+            scope_sql
+            + sql.SQL(
+                """
+                SELECT
+                    COUNT(*) AS product_count,
+                    COALESCE(SUM(totalunits), 0) AS total_units,
+                    COALESCE(SUM(totalamount), 0) AS total_amount,
+                    AVG(price) AS avg_price,
+                    COUNT(DISTINCT year_month) AS active_periods
+                FROM scoped
+                WHERE ABS(pounds_value - %s) < 0.0001
+                """
+            )
+        )
+        products_query = (
+            scope_sql
+            + sql.SQL(
+                """
+                SELECT
+                    asin,
+                    MAX(title) AS title,
+                    MAX(brand) AS brand,
+                    MAX(imageurl) AS imageurl,
+                    MAX(weight) AS weight,
+                    MAX(dimensions) AS dimensions,
+                    MAX(sellername) AS sellername,
+                    MAX(parent) AS parent,
+                    COALESCE(SUM(totalunits), 0) AS total_units,
+                    COALESCE(SUM(totalamount), 0) AS total_amount,
+                    AVG(price) AS avg_price,
+                    COUNT(DISTINCT year_month) AS active_periods,
+                    MAX(year_month) AS latest_year_month
+                FROM scoped
+                WHERE ABS(pounds_value - %s) < 0.0001
+                GROUP BY asin
+                ORDER BY total_units DESC, total_amount DESC, asin ASC
+                LIMIT %s
+                """
+            )
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(summary_query, [*scope_params, pounds])
+            summary_row = cur.fetchone()
+            cur.execute(products_query, [*scope_params, pounds, safe_limit])
+            product_rows = cur.fetchall()
+
+    summary = None
+    if summary_row and (_to_int(summary_row.get("product_count")) or 0) > 0:
+        summary = {
+            "product_count": _to_int(summary_row.get("product_count")) or 0,
+            "total_units": _to_float(summary_row.get("total_units")) or 0.0,
+            "total_amount": _to_float(summary_row.get("total_amount")) or 0.0,
+            "avg_price": _to_float(summary_row.get("avg_price")),
+            "active_periods": _to_int(summary_row.get("active_periods")) or 0,
+        }
+
+    products = [
+        {
+            "asin": str(row.get("asin") or "").strip(),
+            "title": row.get("title"),
+            "brand": row.get("brand"),
+            "imageurl": row.get("imageurl"),
+            "weight": row.get("weight"),
+            "dimensions": row.get("dimensions"),
+            "sellername": row.get("sellername"),
+            "parent": row.get("parent"),
+            "total_units": _to_float(row.get("total_units")) or 0.0,
+            "total_amount": _to_float(row.get("total_amount")) or 0.0,
+            "avg_price": _to_float(row.get("avg_price")),
+            "active_periods": _to_int(row.get("active_periods")) or 0,
+            "latest_year_month": _to_int(row.get("latest_year_month")),
+        }
+        for row in product_rows
+    ]
+
+    return {
+        "view": normalized_view,
+        "year": year,
+        "month": month,
+        "pounds": pounds,
+        "pounds_label": _format_pounds_label(pounds),
+        "summary": summary,
+        "products": products,
+    }
+
+
+
+

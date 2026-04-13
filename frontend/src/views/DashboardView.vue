@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="dashboard">
     <section class="word-trend-panel">
       <div class="word-trend-header">
@@ -209,21 +209,21 @@
             :class="{ active: growthTop10Mode === 'monthly' }"
             @click="switchGrowthTop10Mode('monthly')"
           >
-            月度增长率TOP10
+            月度增长率
           </button>
           <button
             class="keyword-top10-tab"
             :class="{ active: growthTop10Mode === 'quarterly' }"
             @click="switchGrowthTop10Mode('quarterly')"
           >
-            季度增长率TOP10
+            季度增长率
           </button>
           <button
             class="keyword-top10-tab"
             :class="{ active: growthTop10Mode === 'searches' }"
             @click="switchGrowthTop10Mode('searches')"
           >
-            总搜索量TOP10
+            总搜索量
           </button>
         </div>
         <div class="growth-top10-filters-wrap">
@@ -281,9 +281,14 @@
         </div>
       </div>
 
-      <div v-if="growthTop10Loading" class="keyword-top10-loading">增长率TOP10 加载中...</div>
+      <div v-if="growthTop10Loading" class="keyword-top10-loading">列表加载中...</div>
       <div v-else-if="growthTop10Error" class="keyword-top10-error">{{ growthTop10Error }}</div>
-      <div v-else-if="growthTop10Rows.length" class="table-wrap growth-top10-table-wrap">
+      <div
+        v-else-if="growthTop10Rows.length"
+        class="table-wrap growth-top10-table-wrap"
+        ref="growthTop10WrapRef"
+        @scroll.passive="onGrowthTop10WrapScroll"
+      >
         <table class="data-table growth-top10-table">
           <thead>
             <tr>
@@ -315,8 +320,9 @@
             </tr>
           </tbody>
         </table>
+        <div v-if="growthTop10LoadingMore" class="keyword-top10-loading more">加载更多中...</div>
       </div>
-      <div v-else class="keyword-top10-empty">暂无增长率Top10数据</div>
+      <div v-else class="keyword-top10-empty">暂无增长率数据</div>
     </section>
 
     <section class="table-panel" :class="{ 'panel-fullscreen': panelFullscreen }" ref="tablePanelRef">
@@ -619,8 +625,8 @@
 </template>
 
 <script setup lang="ts">
+import axios from "axios";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-
 import {
   createPgExportJob,
   downloadPgExportJob,
@@ -672,6 +678,7 @@ const WORD_FIXED_COLUMNS = [
 ];
 const TOP10_VISIBLE_COLUMNS = [...ABA_FIXED_COLUMNS];
 const TOP10_PAGE_SIZE = 10;
+const GROWTH_TOP10_PAGE_SIZE = 10;
 const GROWTH_TOP10_VISIBLE_COLUMNS = [
   "word",
   "word_zh",
@@ -838,9 +845,13 @@ const keywordTop10Map = ref<Record<string, KeywordTop10State>>({});
 const activeTop10Word = ref("");
 const growthTop10Mode = ref<GrowthTop10Mode>("monthly");
 const growthTop10Loading = ref(false);
+const growthTop10LoadingMore = ref(false);
 const growthTop10Error = ref("");
 const growthTop10ColumnsRaw = ref<string[]>([]);
 const growthTop10Rows = ref<Record<string, unknown>[]>([]);
+const growthTop10Page = ref(0);
+const growthTop10PageSize = ref(GROWTH_TOP10_PAGE_SIZE);
+const growthTop10Total = ref(0);
 const growthTop10YearMonths = ref<number[]>([]);
 const growthTop10SelectedYear = ref(0);
 const growthTop10SelectedMonth = ref(0);
@@ -863,6 +874,7 @@ const orderedColumns = ref<string[]>([]);
 const tablePanelRef = ref<HTMLElement | null>(null);
 const tableWrapRef = ref<HTMLElement | null>(null);
 const top10WrapRef = ref<HTMLElement | null>(null);
+const growthTop10WrapRef = ref<HTMLElement | null>(null);
 const filterMenuRef = ref<HTMLElement | null>(null);
 const draggingCol = ref("");
 const dragGhost = ref({
@@ -894,8 +906,10 @@ let filterTimer: ReturnType<typeof setTimeout> | null = null;
 let growthTop10FilterTimer: ReturnType<typeof setTimeout> | null = null;
 let growthTop10AverageCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 let activeTableRequestSeq = 0;
+let activeTableAbortController: AbortController | null = null;
 let scrollCheckRaf = 0;
 let top10ScrollCheckRaf = 0;
+let growthTop10ScrollCheckRaf = 0;
 let activeFilterRequestSeq = 0;
 let activeGrowthTop10RequestSeq = 0;
 
@@ -1029,6 +1043,7 @@ const growthTop10SortField = computed(() =>
       ? "total_searches_quarter_avg_growth_rate"
       : "total_searches"
 );
+const growthTop10HasMore = computed(() => growthTop10Total.value > 0 && growthTop10Rows.value.length < growthTop10Total.value);
 const growthTop10Columns = computed(() => {
   const availableSet = new Set(growthTop10ColumnsRaw.value);
   return GROWTH_TOP10_VISIBLE_COLUMNS.filter((col) => availableSet.has(col));
@@ -1361,14 +1376,28 @@ function parseYearMonth(ym: number | null | undefined): { year?: number; month?:
   return { year, month };
 }
 
-async function loadGrowthTop10(): Promise<void> {
-  const requestSeq = ++activeGrowthTop10RequestSeq;
-  growthTop10Loading.value = true;
+async function loadGrowthTop10(options: { append?: boolean } = {}): Promise<void> {
+  const append = options.append === true;
+  if (append) {
+    if (growthTop10Loading.value || growthTop10LoadingMore.value || !growthTop10HasMore.value) return;
+  }
+
+  const requestSeq = append ? activeGrowthTop10RequestSeq : ++activeGrowthTop10RequestSeq;
   growthTop10Error.value = "";
-  growthTop10Rows.value = [];
-  growthTop10ColumnsRaw.value = [];
-  growthTop10AverageTotalSearches.value = null;
-  growthTop10AverageLabel.value = growthTop10Mode.value === "quarterly" ? "当季平均总搜索量" : "当月平均总搜索量";
+  if (append) {
+    growthTop10LoadingMore.value = true;
+  } else {
+    growthTop10Loading.value = true;
+    growthTop10LoadingMore.value = false;
+    growthTop10Rows.value = [];
+    growthTop10ColumnsRaw.value = [];
+    growthTop10Page.value = 0;
+    growthTop10Total.value = 0;
+    growthTop10AverageTotalSearches.value = null;
+    growthTop10AverageLabel.value = growthTop10Mode.value === "quarterly" ? "当季平均总搜索量" : "当月平均总搜索量";
+    if (growthTop10WrapRef.value) growthTop10WrapRef.value.scrollTop = 0;
+  }
+
   const minText = String(growthTop10SearchMin.value ?? "").trim();
   const maxText = String(growthTop10SearchMax.value ?? "").trim();
   const hasMin = minText.length > 0;
@@ -1381,6 +1410,7 @@ async function loadGrowthTop10(): Promise<void> {
     if (!Number.isFinite(minValue)) {
       growthTop10Error.value = "搜索量最小值必须是数字";
       growthTop10Loading.value = false;
+      growthTop10LoadingMore.value = false;
       return;
     }
   }
@@ -1389,45 +1419,86 @@ async function loadGrowthTop10(): Promise<void> {
     if (!Number.isFinite(maxValue)) {
       growthTop10Error.value = "搜索量最大值必须是数字";
       growthTop10Loading.value = false;
+      growthTop10LoadingMore.value = false;
       return;
     }
   }
   if (minValue !== null && maxValue !== null && minValue > maxValue) {
     growthTop10Error.value = "搜索量最小值不能大于最大值";
     growthTop10Loading.value = false;
+    growthTop10LoadingMore.value = false;
     return;
   }
+
+  const nextPage = append ? growthTop10Page.value + 1 : 1;
 
   try {
     const data = await fetchPgGrowthTop10({
       mode: growthTop10Mode.value,
       table: DATA_TABLES.word.tableName,
-      limit: 10,
+      page: nextPage,
+      pageSize: growthTop10PageSize.value,
       year: growthTop10SelectedYear.value || undefined,
       month: growthTop10SelectedMonth.value || undefined,
       searchMin: minValue ?? undefined,
       searchMax: maxValue ?? undefined,
     });
     if (requestSeq !== activeGrowthTop10RequestSeq) return;
+    const incomingItems: Record<string, unknown>[] = data.items || [];
     growthTop10ColumnsRaw.value = data.columns || [];
-    growthTop10Rows.value = data.items || [];
+    growthTop10Rows.value = append ? [...growthTop10Rows.value, ...incomingItems] : incomingItems;
+    growthTop10Page.value = Number(data.page || nextPage);
+    growthTop10PageSize.value = Number(data.page_size || growthTop10PageSize.value || GROWTH_TOP10_PAGE_SIZE);
+    growthTop10Total.value = Number(data.total || 0);
     growthTop10AverageTotalSearches.value =
       typeof data.average_total_searches === "number" && Number.isFinite(data.average_total_searches)
         ? data.average_total_searches
         : null;
     growthTop10AverageLabel.value = String(data.average_label || growthTop10AverageLabel.value);
+    scheduleGrowthTop10LazyLoadCheck();
   } catch (error) {
     if (requestSeq !== activeGrowthTop10RequestSeq) return;
     console.error("loadGrowthTop10 failed:", error);
-    growthTop10Error.value = "增长率TOP10查询失败，请稍后重试";
-    growthTop10ColumnsRaw.value = [];
-    growthTop10Rows.value = [];
-    growthTop10AverageTotalSearches.value = null;
+    growthTop10Error.value = "增长率数据查询失败，请稍后重试";
+    if (!append) {
+      growthTop10ColumnsRaw.value = [];
+      growthTop10Rows.value = [];
+      growthTop10Page.value = 0;
+      growthTop10Total.value = 0;
+      growthTop10AverageTotalSearches.value = null;
+    }
   } finally {
     if (requestSeq === activeGrowthTop10RequestSeq) {
       growthTop10Loading.value = false;
+      growthTop10LoadingMore.value = false;
     }
   }
+}
+
+function isGrowthTop10NearBottom(): boolean {
+  const el = growthTop10WrapRef.value;
+  if (!el) return false;
+  const threshold = 220;
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - threshold;
+}
+
+async function maybeLoadMoreGrowthTop10Rows(): Promise<void> {
+  if (!growthTop10HasMore.value) return;
+  if (growthTop10Loading.value || growthTop10LoadingMore.value) return;
+  if (!isGrowthTop10NearBottom()) return;
+  await loadGrowthTop10({ append: true });
+}
+
+function scheduleGrowthTop10LazyLoadCheck(): void {
+  if (growthTop10ScrollCheckRaf) return;
+  growthTop10ScrollCheckRaf = window.requestAnimationFrame(() => {
+    growthTop10ScrollCheckRaf = 0;
+    void maybeLoadMoreGrowthTop10Rows();
+  });
+}
+
+function onGrowthTop10WrapScroll(): void {
+  scheduleGrowthTop10LazyLoadCheck();
 }
 
 function scheduleGrowthTop10Reload(delay = 180): void {
@@ -1724,7 +1795,6 @@ function normalizedTextFilters(): Record<string, unknown> {
   }
   return output;
 }
-
 async function loadTable(options: { append?: boolean } = {}): Promise<void> {
   const append = options.append === true;
   if (append) {
@@ -1733,8 +1803,15 @@ async function loadTable(options: { append?: boolean } = {}): Promise<void> {
 
   const requestPage = append ? tablePage.value + 1 : 1;
   const requestSeq = ++activeTableRequestSeq;
-  if (append) tableLoadingMore.value = true;
-  else tableLoading.value = true;
+  let controller: AbortController | null = null;
+  if (append) {
+    tableLoadingMore.value = true;
+  } else {
+    if (activeTableAbortController) activeTableAbortController.abort();
+    controller = new AbortController();
+    activeTableAbortController = controller;
+    tableLoading.value = true;
+  }
 
   try {
     const data = await fetchPgItems({
@@ -1747,6 +1824,7 @@ async function loadTable(options: { append?: boolean } = {}): Promise<void> {
       textFilters: normalizedTextFilters(),
       valueFilters: normalizedValueFilters(),
       table: currentTableName.value,
+      signal: controller?.signal,
     });
     if (requestSeq !== activeTableRequestSeq) return;
 
@@ -1763,7 +1841,13 @@ async function loadTable(options: { append?: boolean } = {}): Promise<void> {
       tableRows.value = data.items;
     }
     syncOrderedColumnsState();
+  } catch (error) {
+    if (axios.isCancel(error)) return;
+    throw error;
   } finally {
+    if (!append && activeTableAbortController === controller) {
+      activeTableAbortController = null;
+    }
     if (append) tableLoadingMore.value = false;
     else tableLoading.value = false;
     if (requestSeq === activeTableRequestSeq) scheduleLazyLoadCheck();
@@ -2350,9 +2434,16 @@ onBeforeUnmount(() => {
     window.cancelAnimationFrame(top10ScrollCheckRaf);
     top10ScrollCheckRaf = 0;
   }
+  if (growthTop10ScrollCheckRaf) {
+    window.cancelAnimationFrame(growthTop10ScrollCheckRaf);
+    growthTop10ScrollCheckRaf = 0;
+  }
+  if (activeTableAbortController) {
+    activeTableAbortController.abort();
+    activeTableAbortController = null;
+  }
 });
 </script>
-
 <style scoped>
 .word-trend-panel {
   margin-bottom: 16px;

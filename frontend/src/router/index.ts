@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import DashboardView from "@/views/DashboardView.vue";
 import CompetitorView from "@/views/CompetitorView.vue";
 import CompetitorReportView from "@/views/CompetitorReportView.vue";
+import WeightedBlanketsPoundsView from "@/views/WeightedBlanketsPoundsView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -25,6 +26,11 @@ const router = createRouter({
       path: "/competitors/report",
       name: "competitor-report",
       component: CompetitorReportView,
+    },
+    {
+      path: "/weighted-blankets/pounds",
+      name: "weighted-blankets-pounds",
+      component: WeightedBlanketsPoundsView,
     },
   ],
 });

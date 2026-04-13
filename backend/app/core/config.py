@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     pg_db: str = "hunter"
     pg_schema: str = "public"
     pg_table: str = "seller_sprite_items"
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 12
+    pg_pool_wait_timeout_seconds: float = 10.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -64,3 +64,57 @@ export interface WordFrequencyTrendResponse {
   points: WordFrequencyTrendPoint[];
   latest_year_month?: number | null;
 }
+
+export interface WeightedBlanketsPoundsSummaryItem {
+  pounds: number | null;
+  pounds_label: string;
+  product_count: number;
+  total_units: number;
+  total_amount: number;
+  avg_price: number | null;
+  active_periods: number;
+}
+
+export interface WeightedBlanketsPoundsSummaryResponse {
+  view: "yearly" | "monthly";
+  year: number | null;
+  month: number | null;
+  items: WeightedBlanketsPoundsSummaryItem[];
+  total_products: number;
+  total_units: number;
+  total_amount: number;
+}
+
+export interface WeightedBlanketsPoundsDetailProduct {
+  asin: string;
+  title?: string | null;
+  brand?: string | null;
+  imageurl?: string | null;
+  weight?: string | null;
+  dimensions?: string | null;
+  sellername?: string | null;
+  parent?: string | null;
+  total_units: number;
+  total_amount: number;
+  avg_price: number | null;
+  active_periods: number;
+  latest_year_month?: number | null;
+}
+
+export interface WeightedBlanketsPoundsDetailSummary {
+  product_count: number;
+  total_units: number;
+  total_amount: number;
+  avg_price: number | null;
+  active_periods: number;
+}
+
+export interface WeightedBlanketsPoundsDetailResponse {
+  view: "yearly" | "monthly";
+  year: number | null;
+  month: number | null;
+  pounds: number;
+  pounds_label: string;
+  summary: WeightedBlanketsPoundsDetailSummary | null;
+  products: WeightedBlanketsPoundsDetailProduct[];
+}

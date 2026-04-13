@@ -4,6 +4,8 @@ import type {
   PgFilterOption,
   PgFilterOptionsResponse,
   PgItemsResponse,
+  WeightedBlanketsPoundsDetailResponse,
+  WeightedBlanketsPoundsSummaryResponse,
   WordFrequencyTrendResponse,
   YearMonthsResponse,
 } from "@/types/data";
@@ -105,7 +107,8 @@ export async function fetchPgGrowthTop10(params: {
   searchMin?: number;
   searchMax?: number;
   table?: string;
-  limit?: number;
+  page?: number;
+  pageSize?: number;
 }): Promise<PgItemsResponse> {
   const payload: Record<string, unknown> = {
     mode: params.mode,
@@ -114,7 +117,8 @@ export async function fetchPgGrowthTop10(params: {
     search_min: params.searchMin,
     search_max: params.searchMax,
     table: params.table,
-    limit: params.limit ?? 10,
+    page: params.page ?? 1,
+    page_size: params.pageSize ?? 10,
   };
   const { data } = await apiClient.get<PgItemsResponse>("/pg/growth-top10", {
     params: payload,
@@ -132,6 +136,7 @@ export async function fetchPgItems(params: {
   textFilters?: Record<string, unknown>;
   valueFilters?: Record<string, string[]>;
   table?: string;
+  signal?: AbortSignal;
 }): Promise<PgItemsResponse> {
   const payload: Record<string, unknown> = {
     year: params.year,
@@ -152,6 +157,7 @@ export async function fetchPgItems(params: {
 
   const { data } = await apiClient.get<PgItemsResponse>("/pg/items", {
     params: payload,
+    signal: params.signal,
   });
   return data;
 }
@@ -306,4 +312,48 @@ export async function fetchPgFilterOptions(params: {
     params: payload,
   });
   return data.items;
+}
+
+export async function fetchWeightedBlanketsPoundsSummary(params: {
+  view: "yearly" | "monthly";
+  year?: number;
+  month?: number;
+  table?: string;
+}): Promise<WeightedBlanketsPoundsSummaryResponse> {
+  const { data } = await apiClient.get<WeightedBlanketsPoundsSummaryResponse>(
+    "/pg/weighted-blankets/pounds-summary",
+    {
+      params: {
+        view: params.view,
+        year: params.year,
+        month: params.month,
+        table: params.table,
+      },
+    }
+  );
+  return data;
+}
+
+export async function fetchWeightedBlanketsPoundsDetail(params: {
+  pounds: number;
+  view: "yearly" | "monthly";
+  year?: number;
+  month?: number;
+  limit?: number;
+  table?: string;
+}): Promise<WeightedBlanketsPoundsDetailResponse> {
+  const { data } = await apiClient.get<WeightedBlanketsPoundsDetailResponse>(
+    "/pg/weighted-blankets/pounds-detail",
+    {
+      params: {
+        pounds: params.pounds,
+        view: params.view,
+        year: params.year,
+        month: params.month,
+        limit: params.limit ?? 100,
+        table: params.table,
+      },
+    }
+  );
+  return data;
 }
