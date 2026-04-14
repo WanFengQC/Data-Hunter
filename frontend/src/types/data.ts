@@ -118,3 +118,39 @@ export interface WeightedBlanketsPoundsDetailResponse {
   summary: WeightedBlanketsPoundsDetailSummary | null;
   products: WeightedBlanketsPoundsDetailProduct[];
 }
+export interface WordFrequencyItemUpdatePayload {
+  word_zh?: string | null;
+  tag_label?: string | null;
+  reason?: string | null;
+}
+
+export interface WordFrequencyItemUpdateResponse {
+  item: Record<string, unknown>;
+}
+
+export interface WordFrequencyShieldPayload {
+  word: string;
+  source_scope?: "word_frequency" | "aba";
+  shielded?: boolean;
+}
+
+export interface WordFrequencyShieldResponse {
+  word: string;
+  source_scope: "word_frequency" | "aba";
+  shielded: boolean;
+  updated_count: number;
+}
+
+export interface ShieldedWordFrequencyItem {
+  word: string;
+  source_scope?: "word_frequency" | "aba";
+  word_zh?: string | null;
+  tag_label?: string | null;
+  reason?: string | null;
+  year_month?: number | null;
+  updated_at?: string | null;
+}
+
+export interface ShieldedWordFrequencyListResponse {
+  items: ShieldedWordFrequencyItem[];
+}

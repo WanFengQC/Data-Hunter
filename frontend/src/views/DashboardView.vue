@@ -115,6 +115,7 @@
               <th v-for="col in activeTop10Columns" :key="`top10-head-${col}`">
                 <span :title="col">{{ columnLabel(col) }}</span>
               </th>
+              <th v-if="props.editable" class="growth-edit-col">屏蔽</th>
             </tr>
           </thead>
           <tbody>
@@ -193,6 +194,16 @@
                   {{ formatCell(getCell(row, col), col, row) }}
                 </template>
               </td>
+              <td v-if="props.editable" class="growth-edit-col">
+                  <button
+                    type="button"
+                    class="shield-row-btn"
+                    :disabled="isWordShielding(String(getCell(row, DATA_TABLES.aba.keywordCol) ?? ''), 'aba')"
+                    @click="shieldTop10Row(row)"
+                  >
+                    {{ isWordShielding(String(getCell(row, DATA_TABLES.aba.keywordCol) ?? ''), 'aba') ? "屏蔽中..." : "屏蔽" }}
+                  </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -227,6 +238,9 @@
           </button>
         </div>
         <div class="growth-top10-filters-wrap">
+          <button v-if="props.editable" type="button" class="shielded-words-btn" @click="openShieldedWordsModal">
+            查看屏蔽词
+          </button>
           <div class="table-filters growth-top10-filters">
             <label>
               年份
@@ -296,6 +310,7 @@
               <th v-for="col in growthTop10Columns" :key="`growth-top10-head-${col}`">
                 <span :title="col">{{ columnLabel(col) }}</span>
               </th>
+              <th v-if="props.editable" class="growth-edit-col">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -316,6 +331,19 @@
                 <template v-else>
                   {{ formatCell(getCell(row, col), col, row) }}
                 </template>
+              </td>
+              <td v-if="props.editable" class="growth-edit-col">
+                <div class="growth-action-buttons">
+                  <button type="button" class="edit-row-btn" @click="openEditModal(row)">编辑</button>
+                  <button
+                    type="button"
+                    class="shield-row-btn"
+                    :disabled="isWordShielding(String(getCell(row, 'word') ?? ''), 'word_frequency')"
+                    @click="shieldGrowthRow(row)"
+                  >
+                    {{ isWordShielding(String(getCell(row, 'word') ?? ''), 'word_frequency') ? "屏蔽中..." : "屏蔽" }}
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -614,6 +642,127 @@
       </div>
     </section>
 
+    <div v-if="editModalOpen" class="edit-modal-backdrop" @click.self="closeEditModal">
+      <div class="edit-modal">
+        <div class="edit-modal-header">
+          <h3>&#x7F16;&#x8F91;&#x8BCD;&#x6761;</h3>
+          <button type="button" class="edit-modal-close" @click="closeEditModal">×</button>
+        </div>
+        <div class="edit-modal-body">
+          <label>
+            翻译1（AI翻译，优先显示）
+            <input v-model.trim="editTranslationPrimary" type="text" placeholder="&#x5F15;&#x53F7;&#x91CC;&#x7684;&#x4F18;&#x5148;&#x7FFB;&#x8BD1;" />
+          </label>
+          <label>
+            翻译2（谷歌翻译，仅供参考）
+            <input
+              v-model.trim="editTranslationSecondary"
+              type="text"
+              class="edit-modal-input-muted"
+              placeholder="Google Translate"
+              readonly
+            />
+          </label>
+          <label>
+            &#x6807;&#x7B7E;
+            <select v-model="editTagLabel" :disabled="editTagOptionsLoading">
+              <option value="">&#x8BF7;&#x9009;&#x62E9;&#x6807;&#x7B7E;</option>
+              <option v-for="option in editTagOptions" :key="`edit-tag-${option}`" :value="option">{{ option }}</option>
+            </select>
+          </label>
+          <label>
+            &#x539F;&#x56E0;
+            <textarea v-model.trim="editReasonSuffix" rows="5" placeholder="&#x53EA;&#x586B;&#x5199;&#x7FFB;&#x8BD1;&#x5916;&#x7684;&#x540E;&#x534A;&#x6BB5;&#x539F;&#x56E0;"></textarea>
+          </label>
+          <p class="edit-modal-preview">
+            &#x4FDD;&#x5B58;&#x540E;&#x539F;&#x56E0;&#xFF1A;{{ composeReason(editTranslationPrimary, editReasonSuffix) || "-" }}
+          </p>
+          <p v-if="editModalError" class="edit-modal-error">{{ editModalError }}</p>
+        </div>
+        <div class="edit-modal-actions">
+          <button type="button" class="secondary-btn" :disabled="editModalSaving" @click="closeEditModal">&#x53D6;&#x6D88;</button>
+          <button type="button" class="primary-btn" :disabled="editModalSaving" @click="saveEditModal">{{ editModalSaving ? "Saving..." : "保存" }}</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="shieldConfirmOpen" class="edit-modal-backdrop" @click.self="cancelShieldConfirm">
+      <div class="edit-modal shield-confirm-modal">
+        <div class="edit-modal-header">
+          <h3>确认屏蔽</h3>
+          <button type="button" class="edit-modal-close" @click="cancelShieldConfirm">×</button>
+        </div>
+        <div class="edit-modal-body">
+          <p class="edit-modal-preview">屏蔽后，该词不会再出现在增长率榜和搜索量榜中。</p>
+          <p class="edit-modal-preview">当前词：{{ shieldConfirmPendingWord || "-" }}</p>
+          <label class="shield-confirm-checkbox">
+            <input v-model="shieldConfirmSkipFuture" type="checkbox" />
+            <span>不再提示</span>
+          </label>
+        </div>
+        <div class="edit-modal-actions">
+          <button type="button" class="secondary-btn" @click="cancelShieldConfirm">取消</button>
+          <button type="button" class="primary-btn" @click="confirmShieldWord">确认屏蔽</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="shieldedWordsModalOpen" class="edit-modal-backdrop" @click.self="closeShieldedWordsModal">
+      <div class="edit-modal shielded-words-modal">
+        <div class="edit-modal-header">
+          <h3>已屏蔽词</h3>
+          <button type="button" class="edit-modal-close" @click="closeShieldedWordsModal">×</button>
+        </div>
+        <div class="edit-modal-body">
+          <div class="shielded-scope-tabs">
+            <button
+              type="button"
+              class="shielded-scope-tab"
+              :class="{ active: shieldedWordsScope === 'word_frequency' }"
+              @click="switchShieldedWordsScope('word_frequency')"
+            >
+              词频
+            </button>
+            <button
+              type="button"
+              class="shielded-scope-tab"
+              :class="{ active: shieldedWordsScope === 'aba' }"
+              @click="switchShieldedWordsScope('aba')"
+            >
+              ABA
+            </button>
+          </div>
+          <p v-if="shieldedWordsLoading" class="edit-modal-preview">加载中...</p>
+          <p v-else-if="shieldedWordsError" class="edit-modal-error">{{ shieldedWordsError }}</p>
+          <p v-else-if="!shieldedWords.length" class="edit-modal-preview">暂无已屏蔽词</p>
+          <div v-else class="shielded-words-list">
+            <div v-for="item in shieldedWords" :key="`shielded-${item.source_scope || 'word_frequency'}-${item.word}`" class="shielded-word-item">
+              <div class="shielded-word-main">
+                <strong>{{ item.word }}</strong>
+                <template v-if="shieldedWordsScope === 'aba'">
+                  <span>{{ item.word_zh || "-" }}</span>
+                </template>
+                <template v-else>
+                  <span class="shielded-word-source">{{ shieldSourceLabel(item.source_scope) }}</span>
+                  <span>{{ item.word_zh || "-" }}</span>
+                  <span>{{ item.tag_label || "-" }}</span>
+                  <span class="shielded-word-reason">{{ item.reason || "-" }}</span>
+                </template>
+              </div>
+              <button
+                type="button"
+                class="secondary-btn shield-restore-btn"
+                :disabled="isWordShielding(item.word, normalizeShieldScope(item.source_scope))"
+                @click="restoreShieldedWord(item.word, normalizeShieldScope(item.source_scope))"
+              >
+                {{ isWordShielding(item.word, normalizeShieldScope(item.source_scope)) ? "恢复中..." : "恢复" }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="edit-modal-actions">
+          <button type="button" class="secondary-btn" @click="closeShieldedWordsModal">关闭</button>
+        </div>
+      </div>
+    </div>
     <TrendDataModal
       :open="trendModalOpen"
       :title="trendModalTitle"
@@ -630,17 +779,29 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   createPgExportJob,
   downloadPgExportJob,
+  fetchShieldedWordFrequencyItems,
   fetchPgExportJob,
   fetchPgFilterOptions,
   fetchPgGrowthTop10,
   fetchPgItems,
+  shieldWordFrequencyItems,
+  updateWordFrequencyItem,
   fetchPgYearMonthsByTable,
   fetchWordFrequencyTrend,
 } from "@/api/data";
 import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
 import TrendDataModal from "@/components/TrendDataModal.vue";
 import WordFrequencyTrendChart from "@/components/WordFrequencyTrendChart.vue";
-import type { PgFilterOption, PgTrendPoint, WordFrequencyTrendResponse } from "@/types/data";
+import type {
+  PgFilterOption,
+  PgTrendPoint,
+  ShieldedWordFrequencyItem,
+  WordFrequencyTrendResponse,
+} from "@/types/data";
+
+const props = withDefaults(defineProps<{ editable?: boolean }>(), {
+  editable: false,
+});
 
 const LONG_PRESS_MS = 220;
 type DataTableMode = "aba" | "word";
@@ -846,6 +1007,26 @@ const activeTop10Word = ref("");
 const growthTop10Mode = ref<GrowthTop10Mode>("monthly");
 const growthTop10Loading = ref(false);
 const growthTop10LoadingMore = ref(false);
+const editModalOpen = ref(false);
+const editModalSaving = ref(false);
+const editModalError = ref("");
+const editingRow = ref<Record<string, unknown> | null>(null);
+const editTranslationPrimary = ref("");
+const editTranslationSecondary = ref("");
+const editTagLabel = ref("");
+const editReasonSuffix = ref("");
+const editTagOptions = ref<string[]>([]);
+const editTagOptionsLoading = ref(false);
+const shieldingWords = ref<string[]>([]);
+const shieldConfirmOpen = ref(false);
+const shieldConfirmSkipFuture = ref(false);
+const shieldConfirmPendingWord = ref("");
+const shieldConfirmPendingSource = ref<"growth" | "top10" | "">("");
+const shieldedWordsModalOpen = ref(false);
+const shieldedWordsLoading = ref(false);
+const shieldedWordsError = ref("");
+const shieldedWords = ref<ShieldedWordFrequencyItem[]>([]);
+const shieldedWordsScope = ref<ShieldSourceScope>("word_frequency");
 const growthTop10Error = ref("");
 const growthTop10ColumnsRaw = ref<string[]>([]);
 const growthTop10Rows = ref<Record<string, unknown>[]>([]);
@@ -860,6 +1041,7 @@ const growthTop10SearchMax = ref<string | number>("");
 const growthTop10AverageTotalSearches = ref<number | null>(null);
 const growthTop10AverageLabel = ref("平均总搜索量");
 const growthTop10AverageCopied = ref(false);
+type ShieldSourceScope = "word_frequency" | "aba";
 
 const yearMonths = ref<number[]>([]);
 const selectedYear = ref(0);
@@ -907,6 +1089,7 @@ let growthTop10FilterTimer: ReturnType<typeof setTimeout> | null = null;
 let growthTop10AverageCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 let activeTableRequestSeq = 0;
 let activeTableAbortController: AbortController | null = null;
+const SHIELD_CONFIRM_SKIP_KEY = "dashboard:shield-confirm-skip";
 let scrollCheckRaf = 0;
 let top10ScrollCheckRaf = 0;
 let growthTop10ScrollCheckRaf = 0;
@@ -1444,7 +1627,9 @@ async function loadGrowthTop10(options: { append?: boolean } = {}): Promise<void
       searchMax: maxValue ?? undefined,
     });
     if (requestSeq !== activeGrowthTop10RequestSeq) return;
-    const incomingItems: Record<string, unknown>[] = data.items || [];
+    const incomingItems: Record<string, unknown>[] = (data.items || []).filter(
+      (row) => !isWordShieldedPersisted(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word"), "word_frequency")
+    );
     growthTop10ColumnsRaw.value = data.columns || [];
     growthTop10Rows.value = append ? [...growthTop10Rows.value, ...incomingItems] : incomingItems;
     growthTop10Page.value = Number(data.page || nextPage);
@@ -1568,7 +1753,9 @@ async function fetchKeywordTop10(
       },
       valueFilters: {},
     });
-    const incomingItems: Record<string, unknown>[] = data.items || [];
+    const incomingItems: Record<string, unknown>[] = (data.items || []).filter(
+      (row) => !isWordShieldedPersisted(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word"), "aba")
+    );
     const items = append ? [...(prev?.items || []), ...incomingItems] : incomingItems;
     keywordTop10Map.value = {
       ...keywordTop10Map.value,
@@ -1736,7 +1923,7 @@ function extractQuotedMeaning(reason: unknown): string {
 
 function resolveDisplayValue(value: unknown, col?: string, row?: Record<string, unknown>): unknown {
   if (col === "word_zh" && row) {
-    const preferred = extractQuotedMeaning(row["原因"]);
+    const preferred = extractQuotedMeaning(getRowReason(row));
     if (preferred) return preferred;
   }
   return value;
@@ -1758,6 +1945,320 @@ function getRowSerial(idx: number): number {
   return idx + 1;
 }
 
+function getRowReason(row: Record<string, unknown>): string {
+  const direct = row["原因"];
+  if (direct !== undefined && direct !== null) return String(direct);
+  const fallback = row["reason"];
+  return fallback === undefined || fallback === null ? "" : String(fallback);
+}
+
+function getRowTagLabel(row: Record<string, unknown>): string {
+  const direct = row["标签"];
+  if (direct !== undefined && direct !== null) return String(direct);
+  const fallback = row["tag_label"];
+  return fallback === undefined || fallback === null ? "" : String(fallback);
+}
+
+function extractReasonSuffix(reason: unknown): string {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) return "";
+  let normalized = text.replace(/^原因[:：]?\s*/, "").trim();
+  normalized = normalized.replace(/^["\u201c\u201d'\u2018\u2019\u300c\u300d\u300e\u300f][^"\u201c\u201d'\u2018\u2019\u300c\u300d\u300e\u300f]+["\u201c\u201d'\u2018\u2019\u300c\u300d\u300e\u300f]\s*[,，、:\uff1a]?\s*/, "").trim();
+  return normalized;
+}
+
+function composeReason(primaryTranslation: string, suffix: string): string {
+  const primary = primaryTranslation.trim();
+  const body = suffix.trim();
+  if (primary && body) return `原因: “${primary}”，${body}`;
+  if (primary) return `原因: “${primary}”`;
+  if (body) return `原因: ${body}`;
+  return "";
+}
+
+async function ensureEditTagOptions(currentValue = ""): Promise<void> {
+  if (editTagOptionsLoading.value) return;
+  if (editTagOptions.value.length) {
+    if (currentValue && !editTagOptions.value.includes(currentValue)) {
+      editTagOptions.value = [currentValue, ...editTagOptions.value];
+    }
+    return;
+  }
+  editTagOptionsLoading.value = true;
+  try {
+    const items = await fetchPgFilterOptions({
+      column: "标签",
+      table: DATA_TABLES.word.tableName,
+      limit: 5000,
+    });
+    const values = items.map((item) => String(item.value || "").trim()).filter(Boolean);
+    editTagOptions.value = currentValue && !values.includes(currentValue) ? [currentValue, ...values] : values;
+  } catch (error) {
+    console.error("ensureEditTagOptions failed:", error);
+    editTagOptions.value = currentValue ? [currentValue] : [];
+  } finally {
+    editTagOptionsLoading.value = false;
+  }
+}
+
+async function openEditModal(row: Record<string, unknown>): Promise<void> {
+  editingRow.value = row;
+  editTranslationPrimary.value = extractQuotedMeaning(getRowReason(row));
+  editTranslationSecondary.value = String(getCell(row, "word_zh") ?? "").trim();
+  editTagLabel.value = getRowTagLabel(row).trim();
+  editReasonSuffix.value = extractReasonSuffix(getRowReason(row));
+  editModalError.value = "";
+  editModalOpen.value = true;
+  await ensureEditTagOptions(editTagLabel.value);
+}
+
+function closeEditModal(): void {
+  editModalOpen.value = false;
+  editModalSaving.value = false;
+  editModalError.value = "";
+  editingRow.value = null;
+  editTranslationPrimary.value = "";
+  editTranslationSecondary.value = "";
+  editTagLabel.value = "";
+  editReasonSuffix.value = "";
+}
+
+function patchRowCollection(rows: Record<string, unknown>[], itemId: number, updated: Record<string, unknown>): Record<string, unknown>[] {
+  return rows.map((row) => (Number(getCell(row, "id")) === itemId ? { ...row, ...updated } : row));
+}
+
+function normalizeShieldWord(word: unknown): string {
+  return String(word ?? "").trim().toLowerCase();
+}
+
+function normalizeShieldScope(source: unknown): ShieldSourceScope {
+  return String(source ?? "").trim().toLowerCase() === "aba" ? "aba" : "word_frequency";
+}
+
+function buildShieldKey(word: unknown, source: ShieldSourceScope): string {
+  const normalizedWord = normalizeShieldWord(word);
+  return normalizedWord ? `${normalizeShieldScope(source)}:${normalizedWord}` : "";
+}
+
+function sourceToShieldScope(source: "growth" | "top10" | ShieldSourceScope): ShieldSourceScope {
+  return source === "top10" || source === "aba" ? "aba" : "word_frequency";
+}
+
+function shieldSourceLabel(source: unknown): string {
+  return normalizeShieldScope(source) === "aba" ? "ABA" : "词频";
+}
+
+function isWordShielding(word: unknown, source: ShieldSourceScope = "word_frequency"): boolean {
+  const key = buildShieldKey(word, source);
+  return key ? shieldingWords.value.includes(key) : false;
+}
+
+function isWordShieldedPersisted(word: unknown, source: ShieldSourceScope): boolean {
+  const normalized = normalizeShieldWord(word);
+  return normalized
+    ? shieldedWords.value.some(
+        (item) =>
+          normalizeShieldWord(item.word) === normalized &&
+          normalizeShieldScope(item.source_scope) === normalizeShieldScope(source)
+      )
+    : false;
+}
+
+function setWordShielding(word: unknown, source: ShieldSourceScope, loading: boolean): void {
+  const key = buildShieldKey(word, source);
+  if (!key) return;
+  if (loading) {
+    if (!shieldingWords.value.includes(key)) {
+      shieldingWords.value = [...shieldingWords.value, key];
+    }
+    return;
+  }
+  shieldingWords.value = shieldingWords.value.filter((item) => item !== key);
+}
+
+function removeShieldedWordFromGrowthRows(word: unknown): void {
+  const normalized = normalizeShieldWord(word);
+  if (!normalized) return;
+  growthTop10Rows.value = growthTop10Rows.value.filter((row) => normalizeShieldWord(getCell(row, "word")) !== normalized);
+}
+
+function removeShieldedWordFromKeywordTop10(word: unknown): void {
+  const normalized = normalizeShieldWord(word);
+  if (!normalized) return;
+  const nextMap: Record<string, KeywordTop10State> = {};
+  for (const [key, state] of Object.entries(keywordTop10Map.value)) {
+    nextMap[key] = {
+      ...state,
+      items: state.items.filter(
+        (row) => normalizeShieldWord(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word")) !== normalized
+      ),
+    };
+  }
+  keywordTop10Map.value = nextMap;
+}
+
+async function refreshShieldedWords(): Promise<void> {
+  const data = await fetchShieldedWordFrequencyItems({
+    table: DATA_TABLES.word.tableName,
+    limit: 1000,
+    sourceScope: shieldedWordsScope.value,
+  });
+  shieldedWords.value = Array.isArray(data.items) ? data.items : [];
+}
+
+async function shieldWordEverywhere(word: unknown, source: ShieldSourceScope, shielded = true): Promise<boolean> {
+  const normalized = normalizeShieldWord(word);
+  const normalizedSource = normalizeShieldScope(source);
+  if (!normalized || isWordShielding(normalized, normalizedSource)) return false;
+  setWordShielding(normalized, normalizedSource, true);
+  try {
+    const result = await shieldWordFrequencyItems({
+      table: DATA_TABLES.word.tableName,
+      payload: {
+        word: normalized,
+        source_scope: normalizedSource,
+        shielded,
+      },
+    });
+    if (!result.updated_count) return false;
+    if (shielded) {
+      if (!isWordShieldedPersisted(normalized, normalizedSource)) {
+        shieldedWords.value = [{ word: normalized, source_scope: normalizedSource }, ...shieldedWords.value];
+      }
+      if (normalizedSource === "word_frequency") {
+        removeShieldedWordFromGrowthRows(normalized);
+      } else {
+        removeShieldedWordFromKeywordTop10(normalized);
+      }
+    } else {
+      shieldedWords.value = shieldedWords.value.filter(
+        (item) =>
+          !(
+            normalizeShieldWord(item.word) === normalized &&
+            normalizeShieldScope(item.source_scope) === normalizedSource
+          )
+      );
+    }
+    return true;
+  } catch (error) {
+    console.error("shieldWordEverywhere failed:", error);
+    return false;
+  } finally {
+    setWordShielding(normalized, normalizedSource, false);
+  }
+}
+
+function openShieldConfirm(word: unknown, source: "growth" | "top10"): void {
+  const normalized = normalizeShieldWord(word);
+  if (!normalized) return;
+  const skipConfirm = typeof window !== "undefined" && window.localStorage.getItem(SHIELD_CONFIRM_SKIP_KEY) === "1";
+  if (skipConfirm) {
+    void shieldWordEverywhere(normalized, sourceToShieldScope(source), true);
+    return;
+  }
+  shieldConfirmPendingWord.value = normalized;
+  shieldConfirmPendingSource.value = source;
+  shieldConfirmSkipFuture.value = false;
+  shieldConfirmOpen.value = true;
+}
+
+function cancelShieldConfirm(): void {
+  shieldConfirmOpen.value = false;
+  shieldConfirmPendingWord.value = "";
+  shieldConfirmPendingSource.value = "";
+  shieldConfirmSkipFuture.value = false;
+}
+
+async function confirmShieldWord(): Promise<void> {
+  const word = shieldConfirmPendingWord.value;
+  if (!word) return;
+  if (shieldConfirmSkipFuture.value && typeof window !== "undefined") {
+    window.localStorage.setItem(SHIELD_CONFIRM_SKIP_KEY, "1");
+  }
+  const sourceScope = sourceToShieldScope(shieldConfirmPendingSource.value || "growth");
+  cancelShieldConfirm();
+  await shieldWordEverywhere(word, sourceScope, true);
+}
+
+async function openShieldedWordsModal(): Promise<void> {
+  shieldedWordsModalOpen.value = true;
+  shieldedWordsLoading.value = true;
+  shieldedWordsError.value = "";
+  try {
+    await refreshShieldedWords();
+  } catch (error) {
+    console.error("openShieldedWordsModal failed:", error);
+    shieldedWordsError.value = "加载已屏蔽词失败，请稍后重试";
+  } finally {
+    shieldedWordsLoading.value = false;
+  }
+}
+
+function closeShieldedWordsModal(): void {
+  shieldedWordsModalOpen.value = false;
+}
+
+async function switchShieldedWordsScope(scope: ShieldSourceScope): Promise<void> {
+  if (shieldedWordsScope.value === scope && shieldedWordsModalOpen.value) return;
+  shieldedWordsScope.value = scope;
+  if (!shieldedWordsModalOpen.value) return;
+  shieldedWordsLoading.value = true;
+  shieldedWordsError.value = "";
+  try {
+    await refreshShieldedWords();
+  } catch (error) {
+    console.error("switchShieldedWordsScope failed:", error);
+    shieldedWordsError.value = "加载已屏蔽词失败，请稍后重试";
+  } finally {
+    shieldedWordsLoading.value = false;
+  }
+}
+
+async function restoreShieldedWord(word: unknown, source: ShieldSourceScope): Promise<void> {
+  const normalized = normalizeShieldWord(word);
+  if (!normalized) return;
+  await shieldWordEverywhere(normalized, source, false);
+}
+
+async function shieldGrowthRow(row: Record<string, unknown>): Promise<void> {
+  openShieldConfirm(getCell(row, "word"), "growth");
+}
+
+async function shieldTop10Row(row: Record<string, unknown>): Promise<void> {
+  openShieldConfirm(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word"), "top10");
+}
+
+async function saveEditModal(): Promise<void> {
+  if (!editingRow.value || editModalSaving.value) return;
+  const itemId = Number(getCell(editingRow.value, "id"));
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    editModalError.value = "缺少可编辑行 id";
+    return;
+  }
+
+  editModalSaving.value = true;
+  editModalError.value = "";
+  try {
+    const response = await updateWordFrequencyItem({
+      itemId,
+      table: DATA_TABLES.word.tableName,
+      payload: {
+        word_zh: editTranslationSecondary.value.trim() || null,
+        tag_label: editTagLabel.value.trim() || null,
+        reason: composeReason(editTranslationPrimary.value, editReasonSuffix.value) || null,
+      },
+    });
+    const updated = response.item || {};
+    growthTop10Rows.value = patchRowCollection(growthTop10Rows.value, itemId, updated);
+    tableRows.value = patchRowCollection(tableRows.value, itemId, updated);
+    closeEditModal();
+  } catch (error) {
+    console.error("saveEditModal failed:", error);
+    editModalError.value = "保存失败，请稍后重试";
+  } finally {
+    editModalSaving.value = false;
+  }
+}
 function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoint[]): void {
   if (!points.length) return;
   const keyword = String(row.keyword ?? row.word ?? "").trim();
@@ -2394,6 +2895,11 @@ onMounted(async () => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("fullscreenchange", onFullscreenChange);
   try {
+    await refreshShieldedWords();
+  } catch (error) {
+    console.error("refreshShieldedWords failed:", error);
+  }
+  try {
     await initYearMonthFilters();
   } catch (error) {
     console.error("initYearMonthFilters failed:", error);
@@ -2404,14 +2910,14 @@ onMounted(async () => {
     console.error("initGrowthTop10Filters failed:", error);
   }
   try {
-    await loadTable();
-  } catch (error) {
-    console.error("loadTable failed:", error);
-  }
-  try {
     await loadGrowthTop10();
   } catch (error) {
     console.error("loadGrowthTop10 failed:", error);
+  }
+  try {
+    await loadTable();
+  } catch (error) {
+    console.error("loadTable failed:", error);
   }
   autoReloadReady.value = true;
   scheduleLazyLoadCheck();
@@ -2672,6 +3178,220 @@ onBeforeUnmount(() => {
 .growth-top10-filters {
   margin-top: 0;
   justify-content: flex-end;
+}
+
+.shielded-words-btn {
+  height: 35px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.growth-edit-col {
+  width: 154px;
+  text-align: center;
+}
+
+.growth-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.edit-row-btn {
+  border: 1px solid #b8c8ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #1d4ed8;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.shield-row-btn {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #b91c1c;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.edit-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.36);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.edit-modal {
+  width: min(560px, 100%);
+  max-height: min(80vh, 760px);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+  overflow: auto;
+}
+
+.edit-modal-header,
+.edit-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.edit-modal-header {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.edit-modal-close {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.edit-modal-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.edit-modal-body label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.edit-modal-body input,
+.edit-modal-body select,
+.edit-modal-body textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.edit-modal-input-muted {
+  color: #64748b !important;
+  background: #f8fafc !important;
+  border-color: #dbe2ea !important;
+}
+
+.edit-modal-input-muted::placeholder {
+  color: #94a3b8;
+}
+
+.edit-modal-preview {
+  margin: 0;
+  color: #475569;
+}
+
+.shield-confirm-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500 !important;
+}
+
+.shield-confirm-checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
+.shielded-scope-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.shielded-scope-tab {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  padding: 8px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.shielded-scope-tab.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.edit-modal-error {
+  margin: 0;
+  color: #dc2626;
+}
+
+.edit-modal-actions {
+  border-top: 1px solid #e5e7eb;
+  justify-content: flex-end;
+}
+
+.shielded-words-modal {
+  width: min(720px, 100%);
+}
+
+.shielded-words-list {
+  display: grid;
+  gap: 10px;
+}
+
+.shielded-word-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.shielded-word-main {
+  display: grid;
+  gap: 4px;
+  color: #334155;
+}
+
+.shielded-word-source {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shielded-word-reason {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.shield-restore-btn {
+  margin-top: 0;
+  min-width: 72px;
+}
+
+.edit-modal-actions .secondary-btn,
+.edit-modal-actions .primary-btn {
+  margin-top: 0;
+  height: 40px;
+  min-width: 82px;
 }
 
 .growth-top10-average {

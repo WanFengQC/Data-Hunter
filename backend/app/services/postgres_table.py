@@ -38,6 +38,9 @@ _YEAR_MONTH_INDEX_ATTEMPTS_LOCK = Lock()
 _PG_POOL_LOCK = Lock()
 _PG_POOL_QUEUE: LifoQueue[psycopg.Connection] = LifoQueue()
 _PG_POOL_SIZE = 0
+_WORD_SHIELD_TABLE_SUFFIX = "_shield"
+WORD_SHIELD_SCOPE_WORD_FREQUENCY = "word_frequency"
+WORD_SHIELD_SCOPE_ABA = "aba"
 
 
 def _open_pg_connection(*, autocommit: bool = False, row_factory: Any = dict_row) -> psycopg.Connection:
@@ -180,6 +183,102 @@ def _get_table_profile(conn: psycopg.Connection, schema_name: str, table_name: s
         with _TABLE_PROFILE_LOCK:
             _TABLE_PROFILE_CACHE[key] = profile
     return profile
+
+
+def _invalidate_table_profile(schema_name: str, table_name: str) -> None:
+    key = (schema_name, table_name)
+    with _TABLE_PROFILE_LOCK:
+        _TABLE_PROFILE_CACHE.pop(key, None)
+
+
+def _ensure_bool_column(
+    conn: psycopg.Connection,
+    schema_name: str,
+    table_name: str,
+    profile: dict[str, Any],
+    column_name: str,
+) -> dict[str, Any]:
+    if not profile["exists"]:
+        return profile
+    if column_name in profile["valid_columns"]:
+        return profile
+
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS {} BOOLEAN NOT NULL DEFAULT FALSE").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(table_name),
+                sql.Identifier(column_name),
+            )
+        )
+    conn.commit()
+
+    _invalidate_table_profile(schema_name, table_name)
+    return _get_table_profile(conn, schema_name, table_name)
+
+
+def _word_shield_table_name(table_name: str) -> str:
+    normalized = str(table_name or "").strip()
+    if not normalized:
+        raise ValueError("Table name is required")
+    return f"{normalized}{_WORD_SHIELD_TABLE_SUFFIX}"
+
+
+def _ensure_word_shield_table(
+    conn: psycopg.Connection,
+    schema_name: str,
+    table_name: str,
+) -> str:
+    shield_table_name = _word_shield_table_name(table_name)
+    with conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}.{} (
+                    word TEXT NOT NULL,
+                    source_scope TEXT NOT NULL DEFAULT 'word_frequency',
+                    shielded BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                'ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS source_scope TEXT NOT NULL DEFAULT {}'
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+                sql.Literal(WORD_SHIELD_SCOPE_WORD_FREQUENCY),
+            )
+        )
+        cur.execute(
+            sql.SQL("UPDATE {}.{} SET source_scope = {} WHERE source_scope IS NULL OR trim(source_scope) = ''").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+                sql.Literal(WORD_SHIELD_SCOPE_WORD_FREQUENCY),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} DROP CONSTRAINT IF EXISTS {}").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+                sql.Identifier(f"{shield_table_name}_pkey"),
+            )
+        )
+        cur.execute(
+            sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}.{} (word, source_scope)").format(
+                sql.Identifier(f"{shield_table_name}_word_scope_uidx"),
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+            )
+        )
+    conn.commit()
+    return shield_table_name
 
 
 def _resolve_selected_columns(
@@ -772,6 +871,257 @@ def fetch_items(
     }
 
 
+def update_word_frequency_item(
+    schema_name: str,
+    table_name: str,
+    item_id: int,
+    word_zh: str | None,
+    tag_label: str | None,
+    reason: str | None,
+) -> dict[str, Any]:
+    normalized_word_zh = str(word_zh or "").strip() or None
+    normalized_tag_label = str(tag_label or "").strip() or None
+    normalized_reason = str(reason or "").strip() or None
+
+    with pg_connect() as conn:
+        profile = _get_table_profile(conn, schema_name, table_name)
+        if not profile["exists"]:
+            raise ValueError("Table does not exist")
+
+        valid_columns = profile["valid_columns"]
+        if "id" not in valid_columns:
+            raise ValueError("Table does not support id updates")
+
+        assignments: list[sql.SQL] = []
+        params: list[Any] = []
+        for column_name, value in (("word_zh", normalized_word_zh), ("标签", normalized_tag_label), ("原因", normalized_reason)):
+            if column_name in valid_columns:
+                assignments.append(sql.SQL("{} = %s").format(sql.Identifier(column_name)))
+                params.append(value)
+
+        if not assignments:
+            raise ValueError("Editable columns are missing")
+
+        if "updated_at" in valid_columns:
+            assignments.append(sql.SQL("{} = NOW()").format(sql.Identifier("updated_at")))
+
+        query = (
+            sql.SQL("UPDATE {}.{} SET ").format(sql.Identifier(schema_name), sql.Identifier(table_name))
+            + sql.SQL(", ").join(assignments)
+            + sql.SQL(" WHERE id = %s RETURNING *")
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(query, [*params, item_id])
+            row = cur.fetchone()
+
+        if not row:
+            raise ValueError("Item not found")
+
+    item: dict[str, Any] = {}
+    for key, value in row.items():
+        item[key] = _serialize_value(value)
+    return item
+
+
+def shield_word_frequency_items_by_word(
+    schema_name: str,
+    table_name: str,
+    word: str,
+    source_scope: str = WORD_SHIELD_SCOPE_WORD_FREQUENCY,
+    shielded: bool = True,
+) -> dict[str, Any]:
+    normalized_word = str(word or "").strip().lower()
+    normalized_scope = str(source_scope or "").strip().lower()
+    if not normalized_word:
+        raise ValueError("Word is required")
+    if normalized_scope not in {WORD_SHIELD_SCOPE_WORD_FREQUENCY, WORD_SHIELD_SCOPE_ABA}:
+        raise ValueError("Invalid shield source scope")
+
+    with pg_connect() as conn:
+        shield_table_name = _ensure_word_shield_table(conn, schema_name, table_name)
+        query = sql.SQL(
+            """
+            INSERT INTO {}.{} (word, source_scope, shielded, created_at, updated_at)
+            VALUES (%s, %s, %s, NOW(), NOW())
+            ON CONFLICT (word, source_scope)
+            DO UPDATE SET
+                shielded = EXCLUDED.shielded,
+                updated_at = NOW()
+            """
+        ).format(
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(query, (normalized_word, normalized_scope, shielded))
+            updated_count = cur.rowcount or 0
+        conn.commit()
+
+    return {
+        "word": normalized_word,
+        "source_scope": normalized_scope,
+        "shielded": shielded,
+        "updated_count": int(updated_count),
+    }
+
+
+def fetch_shielded_word_frequency_items(
+    schema_name: str,
+    table_name: str,
+    source_scope: str | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    normalized_limit = max(1, min(int(limit or 500), 5000))
+    normalized_scope = str(source_scope or "").strip().lower()
+    if normalized_scope and normalized_scope not in {WORD_SHIELD_SCOPE_WORD_FREQUENCY, WORD_SHIELD_SCOPE_ABA}:
+        raise ValueError("Invalid shield source scope")
+
+    with pg_connect() as conn:
+        shield_table_name = _ensure_word_shield_table(conn, schema_name, table_name)
+        profile = _get_table_profile(conn, schema_name, table_name)
+        valid_columns = profile["valid_columns"] if profile["exists"] else set()
+
+        latest_detail_sql = sql.SQL(
+            """
+            SELECT
+                NULL::text AS word_zh,
+                NULL::text AS tag_label,
+                NULL::text AS reason,
+                NULL::int AS year_month
+            """
+        )
+        if normalized_scope == WORD_SHIELD_SCOPE_ABA:
+            aba_table_name = settings.pg_table
+            aba_profile = _get_table_profile(conn, schema_name, aba_table_name)
+            aba_valid_columns = aba_profile["valid_columns"] if aba_profile["exists"] else set()
+            if aba_profile["exists"] and "keyword" in aba_valid_columns:
+                aba_detail_fields: list[sql.SQL] = []
+                if "keywordcn" in aba_valid_columns:
+                    aba_detail_fields.append(sql.SQL("""trim(both '"' from CAST(aba.keywordcn AS TEXT)) AS word_zh"""))
+                else:
+                    aba_detail_fields.append(sql.SQL("NULL::text AS word_zh"))
+                aba_detail_fields.append(sql.SQL("NULL::text AS tag_label"))
+                aba_detail_fields.append(sql.SQL("NULL::text AS reason"))
+                if "year_month" in aba_valid_columns:
+                    aba_detail_fields.append(sql.SQL("aba.year_month AS year_month"))
+                else:
+                    aba_detail_fields.append(sql.SQL("NULL::int AS year_month"))
+
+                aba_order_fields: list[sql.SQL] = []
+                if "year_month" in aba_valid_columns:
+                    aba_order_fields.append(sql.SQL("aba.year_month DESC NULLS LAST"))
+                if "id" in aba_valid_columns:
+                    aba_order_fields.append(sql.SQL("aba.id DESC NULLS LAST"))
+                aba_order_fields.append(sql.SQL("aba.keyword ASC"))
+
+                latest_detail_sql = sql.SQL(
+                    """
+                    SELECT {}
+                    FROM {}.{} AS aba
+                    WHERE lower(trim(both '"' from replace(CAST(aba.keyword AS TEXT), chr(65532), ''))) = shield.word
+                    ORDER BY {}
+                    LIMIT 1
+                    """
+                ).format(
+                    sql.SQL(", ").join(aba_detail_fields),
+                    sql.Identifier(schema_name),
+                    sql.Identifier(aba_table_name),
+                    sql.SQL(", ").join(aba_order_fields),
+                )
+        elif profile["exists"] and "word" in valid_columns:
+            detail_fields: list[sql.SQL] = []
+            if "word_zh" in valid_columns:
+                detail_fields.append(sql.SQL("wf.word_zh AS word_zh"))
+            else:
+                detail_fields.append(sql.SQL("NULL::text AS word_zh"))
+            if "标签" in valid_columns:
+                detail_fields.append(sql.SQL('wf."标签" AS tag_label'))
+            else:
+                detail_fields.append(sql.SQL("NULL::text AS tag_label"))
+            if "原因" in valid_columns:
+                detail_fields.append(sql.SQL('wf."原因" AS reason'))
+            else:
+                detail_fields.append(sql.SQL("NULL::text AS reason"))
+            if "year_month" in valid_columns:
+                detail_fields.append(sql.SQL("wf.year_month AS year_month"))
+            else:
+                detail_fields.append(sql.SQL("NULL::int AS year_month"))
+
+            order_fields: list[sql.SQL] = []
+            if "year_month" in valid_columns:
+                order_fields.append(sql.SQL("wf.year_month DESC NULLS LAST"))
+            if "updated_at" in valid_columns:
+                order_fields.append(sql.SQL("wf.updated_at DESC NULLS LAST"))
+            if "id" in valid_columns:
+                order_fields.append(sql.SQL("wf.id DESC NULLS LAST"))
+            order_fields.append(sql.SQL("wf.word ASC"))
+
+            latest_detail_sql = sql.SQL(
+                """
+                SELECT {}
+                FROM {}.{} AS wf
+                WHERE LOWER(TRIM(CAST(wf.word AS TEXT))) = shield.word
+                ORDER BY {}
+                LIMIT 1
+                """
+            ).format(
+                sql.SQL(", ").join(detail_fields),
+                sql.Identifier(schema_name),
+                sql.Identifier(table_name),
+                sql.SQL(", ").join(order_fields),
+            )
+
+        query = sql.SQL(
+            """
+            SELECT
+                shield.word,
+                shield.source_scope,
+                detail.word_zh,
+                detail.tag_label,
+                detail.reason,
+                detail.year_month,
+                shield.updated_at
+            FROM {}.{} AS shield
+            LEFT JOIN LATERAL (
+                {}
+            ) AS detail ON TRUE
+            WHERE shield.shielded = TRUE
+            {}
+            ORDER BY shield.updated_at DESC NULLS LAST, shield.word ASC
+            LIMIT %s
+            """
+        ).format(
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
+            latest_detail_sql,
+            sql.SQL(" AND shield.source_scope = %s") if normalized_scope else sql.SQL(""),
+        )
+
+        with conn.cursor() as cur:
+            query_params: list[Any] = []
+            if normalized_scope:
+                query_params.append(normalized_scope)
+            query_params.append(normalized_limit)
+            cur.execute(query, query_params)
+            rows = cur.fetchall()
+
+    items: list[dict[str, Any]] = []
+    seen_words: set[tuple[str, str]] = set()
+    for row in rows:
+        normalized_word = str(row.get("word") or "").strip().lower()
+        normalized_scope = str(row.get("source_scope") or "").strip().lower() or WORD_SHIELD_SCOPE_WORD_FREQUENCY
+        dedupe_key = (normalized_scope, normalized_word)
+        if not normalized_word or dedupe_key in seen_words:
+            continue
+        seen_words.add(dedupe_key)
+        item: dict[str, Any] = {}
+        for key, value in row.items():
+            item[key] = _serialize_value(value)
+        items.append(item)
+    return items
+
 def fetch_growth_top10_items(
     schema_name: str,
     table_name: str,
@@ -806,6 +1156,7 @@ def fetch_growth_top10_items(
         text_filters["total_searches"] = range_filter
 
     with pg_connect() as conn:
+        shield_table_name = _ensure_word_shield_table(conn, schema_name, table_name)
         profile = _get_table_profile(conn, schema_name, table_name)
         if not profile["exists"]:
             return {
@@ -831,6 +1182,27 @@ def fetch_growth_top10_items(
             text_filters=text_filters,
             value_filters={},
         )
+        shield_sql = sql.SQL(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM {}.{} AS shield
+                WHERE shield.shielded = TRUE
+                  AND shield.source_scope = {}
+                  AND shield.word = LOWER(TRIM(CAST({}.{}.word AS TEXT)))
+            )
+            """
+        ).format(
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
+            sql.Literal(WORD_SHIELD_SCOPE_WORD_FREQUENCY),
+            sql.Identifier(schema_name),
+            sql.Identifier(table_name),
+        )
+        if not where_params and where_sql.as_string(conn).strip() == "":
+            where_sql = sql.SQL(" WHERE ") + shield_sql
+        else:
+            where_sql = where_sql + sql.SQL(" AND ") + shield_sql
         order_sql = _build_order_sql(
             sort_by=sort_by,
             sort_dir="desc",
@@ -867,6 +1239,7 @@ def fetch_growth_top10_items(
                 column_types=column_types,
             )
             avg_clauses.extend(text_clauses)
+            avg_clauses.append(shield_sql)
             avg_params.extend(text_params)
             avg_where_sql = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(avg_clauses)
 

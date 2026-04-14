@@ -4,6 +4,11 @@ import type {
   PgFilterOption,
   PgFilterOptionsResponse,
   PgItemsResponse,
+  ShieldedWordFrequencyListResponse,
+  WordFrequencyShieldPayload,
+  WordFrequencyShieldResponse,
+  WordFrequencyItemUpdatePayload,
+  WordFrequencyItemUpdateResponse,
   WeightedBlanketsPoundsDetailResponse,
   WeightedBlanketsPoundsSummaryResponse,
   WordFrequencyTrendResponse,
@@ -355,5 +360,48 @@ export async function fetchWeightedBlanketsPoundsDetail(params: {
       },
     }
   );
+  return data;
+}
+export async function updateWordFrequencyItem(params: {
+  itemId: number;
+  table?: string;
+  payload: WordFrequencyItemUpdatePayload;
+}): Promise<WordFrequencyItemUpdateResponse> {
+  const { data } = await apiClient.put<WordFrequencyItemUpdateResponse>(
+    `/pg/word-frequency-items/${params.itemId}`,
+    params.payload,
+    {
+      params: {
+        table: params.table,
+      },
+    }
+  );
+  return data;
+}
+
+export async function shieldWordFrequencyItems(params: {
+  table?: string;
+  payload: WordFrequencyShieldPayload;
+}): Promise<WordFrequencyShieldResponse> {
+  const { data } = await apiClient.put<WordFrequencyShieldResponse>("/pg/word-frequency-shield", params.payload, {
+    params: {
+      table: params.table,
+    },
+  });
+  return data;
+}
+
+export async function fetchShieldedWordFrequencyItems(params: {
+  table?: string;
+  limit?: number;
+  sourceScope?: "word_frequency" | "aba";
+} = {}): Promise<ShieldedWordFrequencyListResponse> {
+  const { data } = await apiClient.get<ShieldedWordFrequencyListResponse>("/pg/word-frequency-shield", {
+    params: {
+      table: params.table,
+      limit: params.limit ?? 500,
+      source_scope: params.sourceScope,
+    },
+  });
   return data;
 }

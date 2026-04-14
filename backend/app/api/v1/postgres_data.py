@@ -2,11 +2,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import settings
 from app.services.export_jobs import pg_export_jobs
+from pydantic import BaseModel
+
 from app.services.postgres_table import (
     fetch_asin_aba_history,
     fetch_asin_detail,
@@ -14,14 +16,29 @@ from app.services.postgres_table import (
     fetch_filter_options,
     fetch_growth_top10_items,
     fetch_items,
+    fetch_shielded_word_frequency_items,
     fetch_weighted_blankets_pounds_detail,
     fetch_weighted_blankets_pounds_summary,
     fetch_word_frequency_trend,
+    shield_word_frequency_items_by_word,
+    update_word_frequency_item,
     stream_items_csv,
     fetch_year_months,
 )
 
 router = APIRouter(prefix="/pg", tags=["postgres"])
+
+
+class WordFrequencyItemUpdatePayload(BaseModel):
+    word_zh: str | None = None
+    tag_label: str | None = None
+    reason: str | None = None
+
+
+class WordFrequencyShieldPayload(BaseModel):
+    word: str
+    source_scope: str = "word_frequency"
+    shielded: bool = True
 
 
 def _parse_text_filters(raw: str | None) -> dict[str, Any]:
@@ -182,6 +199,67 @@ def get_growth_top10(
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
+@router.put("/word-frequency-items/{item_id}")
+def update_pg_word_frequency_item(
+    item_id: int,
+    payload: WordFrequencyItemUpdatePayload = Body(...),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="seller_sprite_word_frequency"),
+) -> dict:
+    try:
+        item = update_word_frequency_item(
+            schema_name=schema,
+            table_name=table,
+            item_id=item_id,
+            word_zh=payload.word_zh,
+            tag_label=payload.tag_label,
+            reason=payload.reason,
+        )
+        return {"item": item}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.put("/word-frequency-shield")
+def shield_pg_word_frequency_items(
+    payload: WordFrequencyShieldPayload = Body(...),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="seller_sprite_word_frequency"),
+) -> dict:
+    try:
+        return shield_word_frequency_items_by_word(
+            schema_name=schema,
+            table_name=table,
+            word=payload.word,
+            source_scope=payload.source_scope,
+            shielded=payload.shielded,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/word-frequency-shield")
+def list_pg_word_frequency_shielded_items(
+    limit: int = Query(default=500, ge=1, le=5000),
+    source_scope: str | None = Query(default=None),
+    schema: str = Query(default=settings.pg_schema),
+    table: str = Query(default="seller_sprite_word_frequency"),
+) -> dict:
+    try:
+        items = fetch_shielded_word_frequency_items(
+            schema_name=schema,
+            table_name=table,
+            source_scope=source_scope,
+            limit=limit,
+        )
+        return {"items": items}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @router.get("/asin-aba-history")
 def get_asin_aba_history(
