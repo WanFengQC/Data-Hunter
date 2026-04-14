@@ -1021,12 +1021,23 @@ const shieldingWords = ref<string[]>([]);
 const shieldConfirmOpen = ref(false);
 const shieldConfirmSkipFuture = ref(false);
 const shieldConfirmPendingWord = ref("");
+const shieldConfirmPendingWordZh = ref("");
+const shieldConfirmPendingTagLabel = ref("");
+const shieldConfirmPendingReason = ref("");
 const shieldConfirmPendingSource = ref<"growth" | "top10" | "">("");
 const shieldedWordsModalOpen = ref(false);
 const shieldedWordsLoading = ref(false);
 const shieldedWordsError = ref("");
 const shieldedWords = ref<ShieldedWordFrequencyItem[]>([]);
 const shieldedWordsScope = ref<ShieldSourceScope>("word_frequency");
+const shieldedWordsCache = ref<Record<ShieldSourceScope, ShieldedWordFrequencyItem[]>>({
+  word_frequency: [],
+  aba: [],
+});
+const shieldedWordsLoaded = ref<Record<ShieldSourceScope, boolean>>({
+  word_frequency: false,
+  aba: false,
+});
 const growthTop10Error = ref("");
 const growthTop10ColumnsRaw = ref<string[]>([]);
 const growthTop10Rows = ref<Record<string, unknown>[]>([]);
@@ -2097,18 +2108,44 @@ function removeShieldedWordFromKeywordTop10(word: unknown): void {
   keywordTop10Map.value = nextMap;
 }
 
-async function refreshShieldedWords(): Promise<void> {
+async function refreshShieldedWords(force = false): Promise<void> {
+  if (!force) {
+    const cachedItems = shieldedWordsCache.value[shieldedWordsScope.value];
+    if (shieldedWordsLoaded.value[shieldedWordsScope.value]) {
+      shieldedWords.value = [...cachedItems];
+      return;
+    }
+  }
   const data = await fetchShieldedWordFrequencyItems({
     table: DATA_TABLES.word.tableName,
     limit: 1000,
     sourceScope: shieldedWordsScope.value,
   });
-  shieldedWords.value = Array.isArray(data.items) ? data.items : [];
+  const items = Array.isArray(data.items) ? data.items : [];
+  shieldedWordsCache.value = {
+    ...shieldedWordsCache.value,
+    [shieldedWordsScope.value]: items,
+  };
+  shieldedWordsLoaded.value = {
+    ...shieldedWordsLoaded.value,
+    [shieldedWordsScope.value]: true,
+  };
+  shieldedWords.value = items;
 }
 
-async function shieldWordEverywhere(word: unknown, source: ShieldSourceScope, shielded = true): Promise<boolean> {
+async function shieldWordEverywhere(
+  word: unknown,
+  source: ShieldSourceScope,
+  shielded = true,
+  wordZh?: unknown,
+  tagLabel?: unknown,
+  reason?: unknown
+): Promise<boolean> {
   const normalized = normalizeShieldWord(word);
   const normalizedSource = normalizeShieldScope(source);
+  const normalizedWordZh = String(wordZh ?? "").trim();
+  const normalizedTagLabel = String(tagLabel ?? "").trim();
+  const normalizedReason = String(reason ?? "").trim();
   if (!normalized || isWordShielding(normalized, normalizedSource)) return false;
   setWordShielding(normalized, normalizedSource, true);
   try {
@@ -2117,13 +2154,30 @@ async function shieldWordEverywhere(word: unknown, source: ShieldSourceScope, sh
       payload: {
         word: normalized,
         source_scope: normalizedSource,
+        word_zh: normalizedWordZh || null,
+        tag_label: normalizedSource === "word_frequency" ? normalizedTagLabel || null : null,
+        reason: normalizedSource === "word_frequency" ? normalizedReason || null : null,
         shielded,
       },
     });
     if (!result.updated_count) return false;
     if (shielded) {
       if (!isWordShieldedPersisted(normalized, normalizedSource)) {
-        shieldedWords.value = [{ word: normalized, source_scope: normalizedSource }, ...shieldedWords.value];
+        const nextItem = {
+          word: normalized,
+          source_scope: normalizedSource,
+          word_zh: normalizedWordZh || result.word_zh || null,
+          tag_label: normalizedTagLabel || result.tag_label || null,
+          reason: normalizedReason || result.reason || null,
+        };
+        const cachedItems = shieldedWordsCache.value[normalizedSource] || [];
+        shieldedWordsCache.value = {
+          ...shieldedWordsCache.value,
+          [normalizedSource]: [nextItem, ...cachedItems],
+        };
+        if (shieldedWordsScope.value === normalizedSource) {
+          shieldedWords.value = [nextItem, ...shieldedWords.value];
+        }
       }
       if (normalizedSource === "word_frequency") {
         removeShieldedWordFromGrowthRows(normalized);
@@ -2131,13 +2185,16 @@ async function shieldWordEverywhere(word: unknown, source: ShieldSourceScope, sh
         removeShieldedWordFromKeywordTop10(normalized);
       }
     } else {
-      shieldedWords.value = shieldedWords.value.filter(
-        (item) =>
-          !(
-            normalizeShieldWord(item.word) === normalized &&
-            normalizeShieldScope(item.source_scope) === normalizedSource
-          )
-      );
+      const filterFn = (item: ShieldedWordFrequencyItem) =>
+        !(
+          normalizeShieldWord(item.word) === normalized &&
+          normalizeShieldScope(item.source_scope) === normalizedSource
+        );
+      shieldedWordsCache.value = {
+        ...shieldedWordsCache.value,
+        [normalizedSource]: (shieldedWordsCache.value[normalizedSource] || []).filter(filterFn),
+      };
+      shieldedWords.value = shieldedWords.value.filter(filterFn);
     }
     return true;
   } catch (error) {
@@ -2148,15 +2205,27 @@ async function shieldWordEverywhere(word: unknown, source: ShieldSourceScope, sh
   }
 }
 
-function openShieldConfirm(word: unknown, source: "growth" | "top10"): void {
+function openShieldConfirm(
+  word: unknown,
+  source: "growth" | "top10",
+  wordZh?: unknown,
+  tagLabel?: unknown,
+  reason?: unknown
+): void {
   const normalized = normalizeShieldWord(word);
   if (!normalized) return;
+  const normalizedWordZh = String(wordZh ?? "").trim();
+  const normalizedTagLabel = String(tagLabel ?? "").trim();
+  const normalizedReason = String(reason ?? "").trim();
   const skipConfirm = typeof window !== "undefined" && window.localStorage.getItem(SHIELD_CONFIRM_SKIP_KEY) === "1";
   if (skipConfirm) {
-    void shieldWordEverywhere(normalized, sourceToShieldScope(source), true);
+    void shieldWordEverywhere(normalized, sourceToShieldScope(source), true, normalizedWordZh, normalizedTagLabel, normalizedReason);
     return;
   }
   shieldConfirmPendingWord.value = normalized;
+  shieldConfirmPendingWordZh.value = normalizedWordZh;
+  shieldConfirmPendingTagLabel.value = normalizedTagLabel;
+  shieldConfirmPendingReason.value = normalizedReason;
   shieldConfirmPendingSource.value = source;
   shieldConfirmSkipFuture.value = false;
   shieldConfirmOpen.value = true;
@@ -2165,6 +2234,9 @@ function openShieldConfirm(word: unknown, source: "growth" | "top10"): void {
 function cancelShieldConfirm(): void {
   shieldConfirmOpen.value = false;
   shieldConfirmPendingWord.value = "";
+  shieldConfirmPendingWordZh.value = "";
+  shieldConfirmPendingTagLabel.value = "";
+  shieldConfirmPendingReason.value = "";
   shieldConfirmPendingSource.value = "";
   shieldConfirmSkipFuture.value = false;
 }
@@ -2176,8 +2248,11 @@ async function confirmShieldWord(): Promise<void> {
     window.localStorage.setItem(SHIELD_CONFIRM_SKIP_KEY, "1");
   }
   const sourceScope = sourceToShieldScope(shieldConfirmPendingSource.value || "growth");
+  const wordZh = shieldConfirmPendingWordZh.value;
+  const tagLabel = shieldConfirmPendingTagLabel.value;
+  const reason = shieldConfirmPendingReason.value;
   cancelShieldConfirm();
-  await shieldWordEverywhere(word, sourceScope, true);
+  await shieldWordEverywhere(word, sourceScope, true, wordZh, tagLabel, reason);
 }
 
 async function openShieldedWordsModal(): Promise<void> {
@@ -2221,11 +2296,11 @@ async function restoreShieldedWord(word: unknown, source: ShieldSourceScope): Pr
 }
 
 async function shieldGrowthRow(row: Record<string, unknown>): Promise<void> {
-  openShieldConfirm(getCell(row, "word"), "growth");
+  openShieldConfirm(getCell(row, "word"), "growth", getCell(row, "word_zh"), getCell(row, "标签"), getCell(row, "原因"));
 }
 
 async function shieldTop10Row(row: Record<string, unknown>): Promise<void> {
-  openShieldConfirm(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word"), "top10");
+  openShieldConfirm(getCell(row, DATA_TABLES.aba.keywordCol) ?? getCell(row, "word"), "top10", getCell(row, "keywordcn"));
 }
 
 async function saveEditModal(): Promise<void> {

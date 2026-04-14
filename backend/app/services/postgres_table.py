@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import json
 import re
 from collections.abc import Iterator
@@ -35,6 +35,8 @@ _YEAR_MONTHS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _YEAR_MONTHS_CACHE_LOCK = Lock()
 _YEAR_MONTH_INDEX_ATTEMPTS: set[tuple[str, str]] = set()
 _YEAR_MONTH_INDEX_ATTEMPTS_LOCK = Lock()
+_ABA_KEYWORD_INDEX_ATTEMPTS: set[tuple[str, str]] = set()
+_ABA_KEYWORD_INDEX_ATTEMPTS_LOCK = Lock()
 _PG_POOL_LOCK = Lock()
 _PG_POOL_QUEUE: LifoQueue[psycopg.Connection] = LifoQueue()
 _PG_POOL_SIZE = 0
@@ -70,6 +72,7 @@ def _discard_pooled_connection(conn: psycopg.Connection | None) -> None:
 def pg_connect() -> Iterator[psycopg.Connection]:
     global _PG_POOL_SIZE
     conn: psycopg.Connection | None = None
+    managed_by_pool = False
 
     while conn is None:
         try:
@@ -82,6 +85,7 @@ def pg_connect() -> Iterator[psycopg.Connection]:
                 _discard_pooled_connection(candidate)
                 continue
             conn = candidate
+            managed_by_pool = True
             break
 
         should_create = False
@@ -93,6 +97,7 @@ def pg_connect() -> Iterator[psycopg.Connection]:
         if should_create:
             try:
                 conn = _open_pg_connection()
+                managed_by_pool = True
             except Exception:
                 with _PG_POOL_LOCK:
                     _PG_POOL_SIZE = max(0, _PG_POOL_SIZE - 1)
@@ -101,18 +106,27 @@ def pg_connect() -> Iterator[psycopg.Connection]:
 
         try:
             candidate = _PG_POOL_QUEUE.get(timeout=settings.pg_pool_wait_timeout_seconds)
-        except Empty as exc:
-            raise TimeoutError("Timed out waiting for PostgreSQL connection from pool") from exc
+        except Empty:
+            conn = _open_pg_connection()
+            managed_by_pool = False
+            break
 
         if candidate.closed or getattr(candidate, "broken", False):
             _discard_pooled_connection(candidate)
             continue
         conn = candidate
+        managed_by_pool = True
 
     try:
         yield conn
     finally:
         if conn is None:
+            return
+        if not managed_by_pool:
+            try:
+                conn.close()
+            except Exception:
+                pass
             return
         if conn.closed or getattr(conn, "broken", False):
             _discard_pooled_connection(conn)
@@ -237,6 +251,9 @@ def _ensure_word_shield_table(
                 CREATE TABLE IF NOT EXISTS {}.{} (
                     word TEXT NOT NULL,
                     source_scope TEXT NOT NULL DEFAULT 'word_frequency',
+                    word_zh TEXT NULL,
+                    tag_label TEXT NULL,
+                    reason TEXT NULL,
                     shielded BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
@@ -254,6 +271,24 @@ def _ensure_word_shield_table(
                 sql.Identifier(schema_name),
                 sql.Identifier(shield_table_name),
                 sql.Literal(WORD_SHIELD_SCOPE_WORD_FREQUENCY),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS word_zh TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS tag_label TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS reason TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
             )
         )
         cur.execute(
@@ -393,6 +428,51 @@ def _ensure_default_year_month_index(schema_name: str, table_name: str) -> None:
 
     with _YEAR_MONTH_INDEX_ATTEMPTS_LOCK:
         _YEAR_MONTH_INDEX_ATTEMPTS.add(cache_key)
+
+
+def _ensure_aba_keyword_norm_index(schema_name: str, table_name: str) -> None:
+    if table_name != settings.pg_table:
+        return
+
+    cache_key = (schema_name, table_name)
+    with _ABA_KEYWORD_INDEX_ATTEMPTS_LOCK:
+        if cache_key in _ABA_KEYWORD_INDEX_ATTEMPTS:
+            return
+
+    index_name = f"idx_{table_name}_keyword_norm"
+    try:
+        with pg_connect() as conn:
+            profile = _get_table_profile(conn, schema_name, table_name)
+            if not profile["exists"] or "keyword" not in profile["valid_columns"]:
+                return
+            if _index_exists(conn, schema_name, table_name, index_name):
+                with _ABA_KEYWORD_INDEX_ATTEMPTS_LOCK:
+                    _ABA_KEYWORD_INDEX_ATTEMPTS.add(cache_key)
+                return
+
+        with _pg_connect_autocommit() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE INDEX CONCURRENTLY IF NOT EXISTS {} ON {}.{} (
+                            lower(trim(both '"' from replace(CAST(keyword AS TEXT), chr(65532), '')))
+                        )
+                        """
+                    ).format(
+                        sql.Identifier(index_name),
+                        sql.Identifier(schema_name),
+                        sql.Identifier(table_name),
+                    )
+                )
+    except Exception:
+        with _ABA_KEYWORD_INDEX_ATTEMPTS_LOCK:
+            _ABA_KEYWORD_INDEX_ATTEMPTS.add(cache_key)
+        return
+
+    with _ABA_KEYWORD_INDEX_ATTEMPTS_LOCK:
+        _ABA_KEYWORD_INDEX_ATTEMPTS.add(cache_key)
+
 
 def _build_time_clauses(year: int | None, month: int | None) -> tuple[list[sql.SQL], list[Any]]:
     clauses: list[sql.SQL] = []
@@ -737,7 +817,7 @@ def fetch_filter_options(
     result: list[dict[str, Any]] = []
     for row in rows:
         value = row["value"]
-        label = "(空白)" if value == BLANK_TOKEN else str(value)
+        label = "(绌虹櫧)" if value == BLANK_TOKEN else str(value)
         result.append(
             {
                 "value": value,
@@ -930,9 +1010,15 @@ def shield_word_frequency_items_by_word(
     word: str,
     source_scope: str = WORD_SHIELD_SCOPE_WORD_FREQUENCY,
     shielded: bool = True,
+    word_zh: str | None = None,
+    tag_label: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     normalized_word = str(word or "").strip().lower()
     normalized_scope = str(source_scope or "").strip().lower()
+    normalized_word_zh = str(word_zh or "").strip() or None
+    normalized_tag_label = str(tag_label or "").strip() or None
+    normalized_reason = str(reason or "").strip() or None
     if not normalized_word:
         raise ValueError("Word is required")
     if normalized_scope not in {WORD_SHIELD_SCOPE_WORD_FREQUENCY, WORD_SHIELD_SCOPE_ABA}:
@@ -942,30 +1028,51 @@ def shield_word_frequency_items_by_word(
         shield_table_name = _ensure_word_shield_table(conn, schema_name, table_name)
         query = sql.SQL(
             """
-            INSERT INTO {}.{} (word, source_scope, shielded, created_at, updated_at)
-            VALUES (%s, %s, %s, NOW(), NOW())
+            INSERT INTO {}.{} (word, source_scope, word_zh, tag_label, reason, shielded, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (word, source_scope)
             DO UPDATE SET
+                word_zh = COALESCE(EXCLUDED.word_zh, {}.{}.word_zh),
+                tag_label = COALESCE(EXCLUDED.tag_label, {}.{}.tag_label),
+                reason = COALESCE(EXCLUDED.reason, {}.{}.reason),
                 shielded = EXCLUDED.shielded,
                 updated_at = NOW()
             """
         ).format(
             sql.Identifier(schema_name),
             sql.Identifier(shield_table_name),
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
+            sql.Identifier(schema_name),
+            sql.Identifier(shield_table_name),
         )
 
         with conn.cursor() as cur:
-            cur.execute(query, (normalized_word, normalized_scope, shielded))
+            cur.execute(
+                query,
+                (
+                    normalized_word,
+                    normalized_scope,
+                    normalized_word_zh,
+                    normalized_tag_label,
+                    normalized_reason,
+                    shielded,
+                ),
+            )
             updated_count = cur.rowcount or 0
         conn.commit()
 
     return {
         "word": normalized_word,
         "source_scope": normalized_scope,
+        "word_zh": normalized_word_zh,
+        "tag_label": normalized_tag_label,
+        "reason": normalized_reason,
         "shielded": shielded,
         "updated_count": int(updated_count),
     }
-
 
 def fetch_shielded_word_frequency_items(
     schema_name: str,
@@ -980,139 +1087,165 @@ def fetch_shielded_word_frequency_items(
 
     with pg_connect() as conn:
         shield_table_name = _ensure_word_shield_table(conn, schema_name, table_name)
-        profile = _get_table_profile(conn, schema_name, table_name)
-        valid_columns = profile["valid_columns"] if profile["exists"] else set()
 
-        latest_detail_sql = sql.SQL(
-            """
-            SELECT
-                NULL::text AS word_zh,
-                NULL::text AS tag_label,
-                NULL::text AS reason,
-                NULL::int AS year_month
-            """
-        )
         if normalized_scope == WORD_SHIELD_SCOPE_ABA:
+            shield_query = sql.SQL(
+                """
+                SELECT shield.word, shield.source_scope, shield.word_zh, shield.tag_label, shield.reason, shield.updated_at
+                FROM {}.{} AS shield
+                WHERE shield.shielded = TRUE
+                  AND shield.source_scope = %s
+                ORDER BY shield.updated_at DESC NULLS LAST, shield.word ASC
+                LIMIT %s
+                """
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(shield_table_name),
+            )
+            with conn.cursor() as cur:
+                cur.execute(shield_query, (WORD_SHIELD_SCOPE_ABA, normalized_limit))
+                shield_rows = cur.fetchall()
+
+            detail_map: dict[str, dict[str, Any]] = {}
+            aba_words = sorted(
+                {
+                    str(row.get("word") or "").strip().lower()
+                    for row in shield_rows
+                    if str(row.get("word") or "").strip()
+                }
+            )
+            missing_zh_words = sorted(
+                {
+                    str(row.get("word") or "").strip().lower()
+                    for row in shield_rows
+                    if str(row.get("word") or "").strip() and not str(row.get("word_zh") or "").strip()
+                }
+            )
             aba_table_name = settings.pg_table
             aba_profile = _get_table_profile(conn, schema_name, aba_table_name)
             aba_valid_columns = aba_profile["valid_columns"] if aba_profile["exists"] else set()
-            if aba_profile["exists"] and "keyword" in aba_valid_columns:
-                aba_detail_fields: list[sql.SQL] = []
-                if "keywordcn" in aba_valid_columns:
-                    aba_detail_fields.append(sql.SQL("""trim(both '"' from CAST(aba.keywordcn AS TEXT)) AS word_zh"""))
-                else:
-                    aba_detail_fields.append(sql.SQL("NULL::text AS word_zh"))
-                aba_detail_fields.append(sql.SQL("NULL::text AS tag_label"))
-                aba_detail_fields.append(sql.SQL("NULL::text AS reason"))
-                if "year_month" in aba_valid_columns:
-                    aba_detail_fields.append(sql.SQL("aba.year_month AS year_month"))
-                else:
-                    aba_detail_fields.append(sql.SQL("NULL::int AS year_month"))
-
-                aba_order_fields: list[sql.SQL] = []
-                if "year_month" in aba_valid_columns:
-                    aba_order_fields.append(sql.SQL("aba.year_month DESC NULLS LAST"))
-                if "id" in aba_valid_columns:
-                    aba_order_fields.append(sql.SQL("aba.id DESC NULLS LAST"))
-                aba_order_fields.append(sql.SQL("aba.keyword ASC"))
-
-                latest_detail_sql = sql.SQL(
+            if missing_zh_words and len(missing_zh_words) <= 10 and aba_profile["exists"] and "keyword" in aba_valid_columns:
+                keywordcn_select = (
+                    sql.SQL("""trim(both '"' from CAST(src.keywordcn AS TEXT)) AS word_zh""")
+                    if "keywordcn" in aba_valid_columns
+                    else sql.SQL("NULL::text AS word_zh")
+                )
+                year_month_select = (
+                    sql.SQL("src.year_month AS year_month")
+                    if "year_month" in aba_valid_columns
+                    else sql.SQL("NULL::int AS year_month")
+                )
+                id_order = sql.SQL(", src.id DESC NULLS LAST") if "id" in aba_valid_columns else sql.SQL("")
+                aba_detail_query = sql.SQL(
                     """
-                    SELECT {}
-                    FROM {}.{} AS aba
-                    WHERE lower(trim(both '"' from replace(CAST(aba.keyword AS TEXT), chr(65532), ''))) = shield.word
-                    ORDER BY {}
-                    LIMIT 1
+                    SELECT DISTINCT ON (src.normalized_keyword)
+                        src.normalized_keyword AS word,
+                        {},
+                        {}
+                    FROM (
+                        SELECT
+                            lower(trim(both '"' from replace(CAST(aba.keyword AS TEXT), chr(65532), ''))) AS normalized_keyword,
+                            aba.keywordcn,
+                            {},
+                            {}
+                        FROM {}.{} AS aba
+                        WHERE lower(trim(both '"' from replace(CAST(aba.keyword AS TEXT), chr(65532), ''))) = ANY(%s)
+                    ) AS src
+                    ORDER BY src.normalized_keyword, src.year_month DESC NULLS LAST{}
                     """
                 ).format(
-                    sql.SQL(", ").join(aba_detail_fields),
+                    keywordcn_select,
+                    year_month_select,
+                    sql.SQL("aba.year_month") if "year_month" in aba_valid_columns else sql.SQL("NULL::int AS year_month"),
+                    sql.SQL("aba.id") if "id" in aba_valid_columns else sql.SQL("NULL::bigint AS id"),
                     sql.Identifier(schema_name),
                     sql.Identifier(aba_table_name),
-                    sql.SQL(", ").join(aba_order_fields),
+                    id_order,
                 )
-        elif profile["exists"] and "word" in valid_columns:
-            detail_fields: list[sql.SQL] = []
-            if "word_zh" in valid_columns:
-                detail_fields.append(sql.SQL("wf.word_zh AS word_zh"))
-            else:
-                detail_fields.append(sql.SQL("NULL::text AS word_zh"))
-            if "标签" in valid_columns:
-                detail_fields.append(sql.SQL('wf."标签" AS tag_label'))
-            else:
-                detail_fields.append(sql.SQL("NULL::text AS tag_label"))
-            if "原因" in valid_columns:
-                detail_fields.append(sql.SQL('wf."原因" AS reason'))
-            else:
-                detail_fields.append(sql.SQL("NULL::text AS reason"))
-            if "year_month" in valid_columns:
-                detail_fields.append(sql.SQL("wf.year_month AS year_month"))
-            else:
-                detail_fields.append(sql.SQL("NULL::int AS year_month"))
+                with conn.cursor() as cur:
+                    cur.execute(aba_detail_query, (missing_zh_words,))
+                    for row in cur.fetchall():
+                        normalized_word = str(row.get("word") or "").strip().lower()
+                        if normalized_word:
+                            detail_map[normalized_word] = {
+                                "word_zh": row.get("word_zh"),
+                                "tag_label": None,
+                                "reason": None,
+                                "year_month": row.get("year_month"),
+                            }
+                if detail_map:
+                    update_query = sql.SQL(
+                        """
+                        UPDATE {}.{} AS shield
+                        SET word_zh = src.word_zh,
+                            updated_at = shield.updated_at
+                        FROM (SELECT unnest(%s::text[]) AS word, unnest(%s::text[]) AS word_zh) AS src
+                        WHERE shield.word = src.word
+                          AND shield.source_scope = %s
+                          AND (shield.word_zh IS NULL OR trim(shield.word_zh) = '')
+                        """
+                    ).format(
+                        sql.Identifier(schema_name),
+                        sql.Identifier(shield_table_name),
+                    )
+                    update_words = list(detail_map.keys())
+                    update_word_zh = [str(detail_map[word].get("word_zh") or "") for word in update_words]
+                    with conn.cursor() as cur:
+                        cur.execute(update_query, (update_words, update_word_zh, WORD_SHIELD_SCOPE_ABA))
+                    conn.commit()
 
-            order_fields: list[sql.SQL] = []
-            if "year_month" in valid_columns:
-                order_fields.append(sql.SQL("wf.year_month DESC NULLS LAST"))
-            if "updated_at" in valid_columns:
-                order_fields.append(sql.SQL("wf.updated_at DESC NULLS LAST"))
-            if "id" in valid_columns:
-                order_fields.append(sql.SQL("wf.id DESC NULLS LAST"))
-            order_fields.append(sql.SQL("wf.word ASC"))
-
-            latest_detail_sql = sql.SQL(
+            rows: list[dict[str, Any]] = []
+            for shield_row in shield_rows:
+                normalized_word = str(shield_row.get("word") or "").strip().lower()
+                detail = detail_map.get(normalized_word, {})
+                rows.append(
+                    {
+                        "word": normalized_word,
+                        "source_scope": WORD_SHIELD_SCOPE_ABA,
+                        "word_zh": str(shield_row.get("word_zh") or "").strip() or detail.get("word_zh"),
+                        "tag_label": str(shield_row.get("tag_label") or "").strip() or detail.get("tag_label"),
+                        "reason": str(shield_row.get("reason") or "").strip() or detail.get("reason"),
+                        "year_month": detail.get("year_month"),
+                        "updated_at": shield_row.get("updated_at"),
+                    }
+                )
+        else:
+            query = sql.SQL(
                 """
-                SELECT {}
-                FROM {}.{} AS wf
-                WHERE LOWER(TRIM(CAST(wf.word AS TEXT))) = shield.word
-                ORDER BY {}
-                LIMIT 1
+                SELECT
+                    shield.word,
+                    shield.source_scope,
+                    shield.word_zh,
+                    shield.tag_label,
+                    shield.reason,
+                    NULL::int AS year_month,
+                    shield.updated_at
+                FROM {}.{} AS shield
+                WHERE shield.shielded = TRUE
+                {}
+                ORDER BY shield.updated_at DESC NULLS LAST, shield.word ASC
+                LIMIT %s
                 """
             ).format(
-                sql.SQL(", ").join(detail_fields),
                 sql.Identifier(schema_name),
-                sql.Identifier(table_name),
-                sql.SQL(", ").join(order_fields),
+                sql.Identifier(shield_table_name),
+                sql.SQL(" AND shield.source_scope = %s") if normalized_scope else sql.SQL(""),
             )
 
-        query = sql.SQL(
-            """
-            SELECT
-                shield.word,
-                shield.source_scope,
-                detail.word_zh,
-                detail.tag_label,
-                detail.reason,
-                detail.year_month,
-                shield.updated_at
-            FROM {}.{} AS shield
-            LEFT JOIN LATERAL (
-                {}
-            ) AS detail ON TRUE
-            WHERE shield.shielded = TRUE
-            {}
-            ORDER BY shield.updated_at DESC NULLS LAST, shield.word ASC
-            LIMIT %s
-            """
-        ).format(
-            sql.Identifier(schema_name),
-            sql.Identifier(shield_table_name),
-            latest_detail_sql,
-            sql.SQL(" AND shield.source_scope = %s") if normalized_scope else sql.SQL(""),
-        )
-
-        with conn.cursor() as cur:
-            query_params: list[Any] = []
-            if normalized_scope:
-                query_params.append(normalized_scope)
-            query_params.append(normalized_limit)
-            cur.execute(query, query_params)
-            rows = cur.fetchall()
+            with conn.cursor() as cur:
+                query_params: list[Any] = []
+                if normalized_scope:
+                    query_params.append(normalized_scope)
+                query_params.append(normalized_limit)
+                cur.execute(query, query_params)
+                rows = cur.fetchall()
 
     items: list[dict[str, Any]] = []
     seen_words: set[tuple[str, str]] = set()
     for row in rows:
         normalized_word = str(row.get("word") or "").strip().lower()
-        normalized_scope = str(row.get("source_scope") or "").strip().lower() or WORD_SHIELD_SCOPE_WORD_FREQUENCY
-        dedupe_key = (normalized_scope, normalized_word)
+        row_scope = str(row.get("source_scope") or "").strip().lower() or WORD_SHIELD_SCOPE_WORD_FREQUENCY
+        dedupe_key = (row_scope, normalized_word)
         if not normalized_word or dedupe_key in seen_words:
             continue
         seen_words.add(dedupe_key)
@@ -1121,7 +1254,6 @@ def fetch_shielded_word_frequency_items(
             item[key] = _serialize_value(value)
         items.append(item)
     return items
-
 def fetch_growth_top10_items(
     schema_name: str,
     table_name: str,
@@ -1166,7 +1298,7 @@ def fetch_growth_top10_items(
                 "page": page,
                 "page_size": page_size,
                 "average_total_searches": None,
-                "average_label": "平均总搜索量",
+                "average_label": "骞冲潎鎬绘悳绱㈤噺",
             }
 
         columns = profile["columns"]
@@ -1223,7 +1355,7 @@ def fetch_growth_top10_items(
             )
             + where_sql
         )
-        average_label = "当月平均总搜索量" if mode != "quarterly" else "当季平均总搜索量"
+        average_label = "褰撴湀骞冲潎鎬绘悳绱㈤噺" if mode != "quarterly" else "褰撳骞冲潎鎬绘悳绱㈤噺"
         avg_where_sql = where_sql
         avg_params = list(where_params)
         if mode == "quarterly" and year is not None and month is not None:

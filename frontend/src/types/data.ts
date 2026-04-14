@@ -131,12 +131,18 @@ export interface WordFrequencyItemUpdateResponse {
 export interface WordFrequencyShieldPayload {
   word: string;
   source_scope?: "word_frequency" | "aba";
+  word_zh?: string | null;
+  tag_label?: string | null;
+  reason?: string | null;
   shielded?: boolean;
 }
 
 export interface WordFrequencyShieldResponse {
   word: string;
   source_scope: "word_frequency" | "aba";
+  word_zh?: string | null;
+  tag_label?: string | null;
+  reason?: string | null;
   shielded: boolean;
   updated_count: number;
 }

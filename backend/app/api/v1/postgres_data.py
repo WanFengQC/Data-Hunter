@@ -38,6 +38,9 @@ class WordFrequencyItemUpdatePayload(BaseModel):
 class WordFrequencyShieldPayload(BaseModel):
     word: str
     source_scope: str = "word_frequency"
+    word_zh: str | None = None
+    tag_label: str | None = None
+    reason: str | None = None
     shielded: bool = True
 
 
@@ -235,6 +238,9 @@ def shield_pg_word_frequency_items(
             table_name=table,
             word=payload.word,
             source_scope=payload.source_scope,
+            word_zh=payload.word_zh,
+            tag_label=payload.tag_label,
+            reason=payload.reason,
             shielded=payload.shielded,
         )
     except ValueError as exc:
