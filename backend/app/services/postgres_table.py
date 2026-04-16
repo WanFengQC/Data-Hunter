@@ -2120,14 +2120,35 @@ def _weighted_blankets_period_clause(view: str, year: int | None, month: int | N
     return sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses), params
 
 
+def _normalize_bucket_step(bucket_step: float | None) -> float | None:
+    if bucket_step is None:
+        return None
+    step = float(bucket_step)
+    if step <= 0:
+        raise ValueError("bucket_step must be greater than 0")
+    if step > 10:
+        raise ValueError("bucket_step is too large")
+    return step
+
+
+def _pounds_bucket_expr(bucket_step: float | None) -> tuple[sql.SQL, list[Any]]:
+    normalized_step = _normalize_bucket_step(bucket_step)
+    if normalized_step is None:
+        return sql.SQL("f.pounds_value"), []
+    # Bucket lower bound, starting from 1.0 (e.g. step=0.5 -> 1.0, 1.5, 2.0 ...)
+    return sql.SQL("FLOOR((f.pounds_value - 1.0) / %s) * %s + 1.0"), [normalized_step, normalized_step]
+
+
 def _build_weighted_blankets_scope_sql(
     schema_name: str,
     table_name: str,
     view: str,
     year: int | None,
     month: int | None,
+    bucket_step: float | None = None,
 ) -> tuple[sql.SQL, list[Any]]:
     period_where_sql, period_params = _weighted_blankets_period_clause(view=view, year=year, month=month)
+    bucket_expr_sql, bucket_expr_params = _pounds_bucket_expr(bucket_step)
     base_sql = sql.SQL(
         """
         WITH filtered AS (
@@ -2142,7 +2163,9 @@ def _build_weighted_blankets_scope_sql(
             {}
         ),
         scoped AS (
-            SELECT f.*
+            SELECT
+                f.*,
+                {} AS pounds_bucket
             FROM filtered f
             WHERE f.pounds_value IS NOT NULL
               AND f.pounds_value BETWEEN 1 AND 35
@@ -2159,10 +2182,11 @@ def _build_weighted_blankets_scope_sql(
         sql.Identifier(schema_name),
         sql.Identifier(table_name),
         period_where_sql,
+        bucket_expr_sql,
         sql.Identifier(schema_name),
         sql.Identifier(table_name),
     )
-    return base_sql, period_params
+    return base_sql, [*period_params, *bucket_expr_params]
 
 
 def _format_pounds_label(value: float | None) -> str:
@@ -2172,14 +2196,25 @@ def _format_pounds_label(value: float | None) -> str:
     return formatted
 
 
+def _format_pounds_range_label(lower: float | None, step: float | None) -> str:
+    if lower is None:
+        return ""
+    if step is None:
+        return _format_pounds_label(lower)
+    upper = lower + step
+    return f"{_format_pounds_label(lower)}-{_format_pounds_label(upper)}"
+
+
 def fetch_weighted_blankets_pounds_summary(
     schema_name: str,
     table_name: str,
     view: str = "yearly",
     year: int | None = None,
     month: int | None = None,
+    bucket_step: float | None = None,
 ) -> dict[str, Any]:
     normalized_view = _normalize_pounds_view(view)
+    normalized_bucket_step = _normalize_bucket_step(bucket_step)
 
     with pg_connect() as conn:
         profile = _get_table_profile(conn, schema_name, table_name)
@@ -2188,6 +2223,7 @@ def fetch_weighted_blankets_pounds_summary(
                 "view": normalized_view,
                 "year": year,
                 "month": month,
+                "bucket_step": normalized_bucket_step,
                 "items": [],
                 "total_products": 0,
                 "total_units": 0.0,
@@ -2200,27 +2236,29 @@ def fetch_weighted_blankets_pounds_summary(
             view=normalized_view,
             year=year,
             month=month,
+            bucket_step=normalized_bucket_step,
         )
         query = (
             scope_sql
             + sql.SQL(
                 """
                 SELECT
-                    pounds_value AS pounds,
+                    pounds_bucket AS pounds,
+                    (pounds_bucket + %s) AS pounds_to,
                     COUNT(*) AS product_count,
                     COALESCE(SUM(totalunits), 0) AS total_units,
                     COALESCE(SUM(totalamount), 0) AS total_amount,
                     AVG(price) AS avg_price,
                     COUNT(DISTINCT year_month) AS active_periods
                 FROM scoped
-                GROUP BY pounds_value
-                ORDER BY pounds_value ASC
+                GROUP BY pounds_bucket
+                ORDER BY pounds_bucket ASC
                 """
             )
         )
 
         with conn.cursor() as cur:
-            cur.execute(query, scope_params)
+            cur.execute(query, [*scope_params, normalized_bucket_step or 0.0])
             rows = cur.fetchall()
 
     items: list[dict[str, Any]] = []
@@ -2238,7 +2276,8 @@ def fetch_weighted_blankets_pounds_summary(
         items.append(
             {
                 "pounds": pounds_value,
-                "pounds_label": _format_pounds_label(pounds_value),
+                "pounds_to": _to_float(row.get("pounds_to")),
+                "pounds_label": _format_pounds_range_label(pounds_value, normalized_bucket_step),
                 "product_count": product_count,
                 "total_units": units_value,
                 "total_amount": amount_value,
@@ -2251,6 +2290,7 @@ def fetch_weighted_blankets_pounds_summary(
         "view": normalized_view,
         "year": year,
         "month": month,
+        "bucket_step": normalized_bucket_step,
         "items": items,
         "total_products": total_products,
         "total_units": total_units,
@@ -2266,8 +2306,10 @@ def fetch_weighted_blankets_pounds_detail(
     year: int | None = None,
     month: int | None = None,
     limit: int = 100,
+    bucket_step: float | None = None,
 ) -> dict[str, Any]:
     normalized_view = _normalize_pounds_view(view)
+    normalized_bucket_step = _normalize_bucket_step(bucket_step)
     safe_limit = max(1, min(int(limit or 100), 300))
 
     with pg_connect() as conn:
@@ -2277,6 +2319,7 @@ def fetch_weighted_blankets_pounds_detail(
                 "view": normalized_view,
                 "year": year,
                 "month": month,
+                "bucket_step": normalized_bucket_step,
                 "pounds": pounds,
                 "pounds_label": _format_pounds_label(pounds),
                 "summary": None,
@@ -2289,53 +2332,61 @@ def fetch_weighted_blankets_pounds_detail(
             view=normalized_view,
             year=year,
             month=month,
+            bucket_step=normalized_bucket_step,
         )
-        summary_query = (
-            scope_sql
-            + sql.SQL(
-                """
-                SELECT
-                    COUNT(*) AS product_count,
-                    COALESCE(SUM(totalunits), 0) AS total_units,
-                    COALESCE(SUM(totalamount), 0) AS total_amount,
-                    AVG(price) AS avg_price,
-                    COUNT(DISTINCT year_month) AS active_periods
-                FROM scoped
-                WHERE ABS(pounds_value - %s) < 0.0001
-                """
-            )
+        summary_template = sql.SQL(
+            """
+            SELECT
+                COUNT(*) AS product_count,
+                COALESCE(SUM(totalunits), 0) AS total_units,
+                COALESCE(SUM(totalamount), 0) AS total_amount,
+                AVG(price) AS avg_price,
+                COUNT(DISTINCT year_month) AS active_periods
+            FROM scoped
+            WHERE {}
+            """
         )
-        products_query = (
-            scope_sql
-            + sql.SQL(
-                """
-                SELECT
-                    asin,
-                    MAX(title) AS title,
-                    MAX(brand) AS brand,
-                    MAX(imageurl) AS imageurl,
-                    MAX(weight) AS weight,
-                    MAX(dimensions) AS dimensions,
-                    MAX(sellername) AS sellername,
-                    MAX(parent) AS parent,
-                    COALESCE(SUM(totalunits), 0) AS total_units,
-                    COALESCE(SUM(totalamount), 0) AS total_amount,
-                    AVG(price) AS avg_price,
-                    COUNT(DISTINCT year_month) AS active_periods,
-                    MAX(year_month) AS latest_year_month
-                FROM scoped
-                WHERE ABS(pounds_value - %s) < 0.0001
-                GROUP BY asin
-                ORDER BY total_units DESC, total_amount DESC, asin ASC
-                LIMIT %s
-                """
-            )
+        products_template = sql.SQL(
+            """
+            SELECT
+                asin,
+                MAX(title) AS title,
+                MAX(brand) AS brand,
+                MAX(imageurl) AS imageurl,
+                MAX(weight) AS weight,
+                MAX(dimensions) AS dimensions,
+                MAX(sellername) AS sellername,
+                MAX(parent) AS parent,
+                COALESCE(SUM(totalunits), 0) AS total_units,
+                COALESCE(SUM(totalamount), 0) AS total_amount,
+                AVG(price) AS avg_price,
+                COUNT(DISTINCT year_month) AS active_periods,
+                MAX(year_month) AS latest_year_month
+            FROM scoped
+            WHERE {}
+            GROUP BY asin
+            ORDER BY total_units DESC, total_amount DESC, asin ASC
+            LIMIT %s
+            """
         )
 
+        if normalized_bucket_step is None:
+            bucket_match_sql = sql.SQL("ABS(pounds_bucket - %s) < 0.0001")
+            summary_params = [*scope_params, pounds]
+            products_params = [*scope_params, pounds, safe_limit]
+        else:
+            bucket_upper = pounds + normalized_bucket_step
+            bucket_match_sql = sql.SQL("pounds_bucket >= %s AND pounds_bucket < %s")
+            summary_params = [*scope_params, pounds, bucket_upper]
+            products_params = [*scope_params, pounds, bucket_upper, safe_limit]
+
+        summary_query = scope_sql + summary_template.format(bucket_match_sql)
+        products_query = scope_sql + products_template.format(bucket_match_sql)
+
         with conn.cursor() as cur:
-            cur.execute(summary_query, [*scope_params, pounds])
+            cur.execute(summary_query, summary_params)
             summary_row = cur.fetchone()
-            cur.execute(products_query, [*scope_params, pounds, safe_limit])
+            cur.execute(products_query, products_params)
             product_rows = cur.fetchall()
 
     summary = None
@@ -2371,8 +2422,10 @@ def fetch_weighted_blankets_pounds_detail(
         "view": normalized_view,
         "year": year,
         "month": month,
+        "bucket_step": normalized_bucket_step,
         "pounds": pounds,
-        "pounds_label": _format_pounds_label(pounds),
+        "pounds_to": pounds + normalized_bucket_step if normalized_bucket_step is not None else None,
+        "pounds_label": _format_pounds_range_label(pounds, normalized_bucket_step),
         "summary": summary,
         "products": products,
     }

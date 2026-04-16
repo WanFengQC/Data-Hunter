@@ -323,6 +323,7 @@ export async function fetchWeightedBlanketsPoundsSummary(params: {
   view: "yearly" | "monthly";
   year?: number;
   month?: number;
+  bucketStep?: number;
   table?: string;
 }): Promise<WeightedBlanketsPoundsSummaryResponse> {
   const { data } = await apiClient.get<WeightedBlanketsPoundsSummaryResponse>(
@@ -332,6 +333,7 @@ export async function fetchWeightedBlanketsPoundsSummary(params: {
         view: params.view,
         year: params.year,
         month: params.month,
+        bucket_step: params.bucketStep,
         table: params.table,
       },
     }
@@ -344,6 +346,7 @@ export async function fetchWeightedBlanketsPoundsDetail(params: {
   view: "yearly" | "monthly";
   year?: number;
   month?: number;
+  bucketStep?: number;
   limit?: number;
   table?: string;
 }): Promise<WeightedBlanketsPoundsDetailResponse> {
@@ -355,6 +358,7 @@ export async function fetchWeightedBlanketsPoundsDetail(params: {
         view: params.view,
         year: params.year,
         month: params.month,
+        bucket_step: params.bucketStep,
         limit: params.limit ?? 100,
         table: params.table,
       },

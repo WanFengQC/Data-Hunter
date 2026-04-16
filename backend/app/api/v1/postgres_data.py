@@ -127,6 +127,7 @@ def get_weighted_blankets_pounds_summary(
     view: str = Query(default="yearly"),
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
+    bucket_step: float | None = Query(default=None, gt=0),
     schema: str = Query(default=settings.pg_schema),
     table: str = Query(default="weighted_blankets_competitor_items"),
 ) -> dict:
@@ -137,6 +138,7 @@ def get_weighted_blankets_pounds_summary(
             view=view,
             year=year,
             month=month,
+            bucket_step=bucket_step,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -150,6 +152,7 @@ def get_weighted_blankets_pounds_detail(
     view: str = Query(default="yearly"),
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
+    bucket_step: float | None = Query(default=None, gt=0),
     limit: int = Query(default=100, ge=1, le=300),
     schema: str = Query(default=settings.pg_schema),
     table: str = Query(default="weighted_blankets_competitor_items"),
@@ -162,6 +165,7 @@ def get_weighted_blankets_pounds_detail(
             view=view,
             year=year,
             month=month,
+            bucket_step=bucket_step,
             limit=limit,
         )
     except ValueError as exc:

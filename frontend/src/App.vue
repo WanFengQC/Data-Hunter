@@ -7,8 +7,8 @@
           <p>SellerSprite data workspace</p>
         </div>
         <nav class="topnav">
-          <RouterLink to="/aba" class="nav-link">ABA数据选品</RouterLink>
-          <RouterLink to="/competitors" class="nav-link">查竞品</RouterLink>
+          <RouterLink to="/aba" class="nav-link">查趋势</RouterLink>
+          <RouterLink to="/competitors" class="nav-link">查市场</RouterLink>
           <RouterLink to="/weighted-blankets/pounds" class="nav-link">查磅数</RouterLink>
         </nav>
       </div>

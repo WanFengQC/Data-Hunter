@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <main class="dashboard pounds-page">
     <section class="pounds-hero">
       <div>
@@ -31,18 +31,18 @@
           <button
             type="button"
             class="pounds-segmented-btn"
-            :class="{ active: viewMode === 'yearly' }"
-            @click="setViewMode('yearly')"
+            :class="{ active: datasetMode === 'weighted_blankets' }"
+            @click="datasetMode = 'weighted_blankets'"
           >
-            按年份
+            Weighted Blankets
           </button>
           <button
             type="button"
             class="pounds-segmented-btn"
-            :class="{ active: viewMode === 'monthly' }"
-            @click="setViewMode('monthly')"
+            :class="{ active: datasetMode === 'stuffed_animals_child' }"
+            @click="datasetMode = 'stuffed_animals_child'"
           >
-            按月份
+            Stuffed Animals & Teddy Bears
           </button>
         </div>
 
@@ -56,8 +56,8 @@
 
         <label class="pounds-field">
           <span>月份</span>
-          <select v-model.number="selectedMonth" :disabled="viewMode !== 'monthly'">
-            <option :value="0">{{ viewMode === "monthly" ? "请选择" : "全部" }}</option>
+          <select v-model.number="selectedMonth">
+            <option :value="0">全部（按年份）</option>
             <option v-for="month in monthOptions" :key="month" :value="month">
               {{ String(month).padStart(2, "0") }}
             </option>
@@ -101,7 +101,7 @@
       <ReportChart
         v-else
         :option="chartOption"
-        height="520px"
+        height="620px"
         @chart-click="handleChartClick"
       />
     </section>
@@ -214,7 +214,6 @@
     </div>
   </main>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import type { EChartsOption } from "echarts";
@@ -231,11 +230,22 @@ import type {
   WeightedBlanketsPoundsSummaryResponse,
 } from "@/types/data";
 
-const TARGET_TABLE = "weighted_blankets_competitor_items";
+type DatasetMode = "weighted_blankets" | "stuffed_animals_child";
+
+const DATASET_CONFIG: Record<DatasetMode, { table: string; label: string }> = {
+  weighted_blankets: {
+    table: "weighted_blankets_competitor_items",
+    label: "Weighted Blankets",
+  },
+  stuffed_animals_child: {
+    table: "stuffed_animals_teddy_bears_child_competitor_items",
+    label: "Stuffed Animals & Teddy Bears",
+  },
+};
 
 const loading = ref(false);
 const error = ref("");
-const viewMode = ref<"yearly" | "monthly">("yearly");
+const datasetMode = ref<DatasetMode>("weighted_blankets");
 const metricMode = ref<"units" | "amount">("units");
 const selectedYear = ref(0);
 const selectedMonth = ref(0);
@@ -255,6 +265,14 @@ const detailLoading = ref(false);
 const detailData = ref<WeightedBlanketsPoundsDetailResponse | null>(null);
 const activePounds = ref<number | null>(null);
 
+const currentDataset = computed(() => DATASET_CONFIG[datasetMode.value]);
+const effectiveViewMode = computed<"yearly" | "monthly">(() =>
+  selectedMonth.value ? "monthly" : "yearly"
+);
+const currentBucketStep = computed<number | undefined>(() =>
+  datasetMode.value === "stuffed_animals_child" ? 0.5 : undefined
+);
+
 const yearOptions = computed(() =>
   [...new Set(availableYearMonths.value.map((item) => Math.floor(item / 100)))].sort((a, b) => b - a)
 );
@@ -267,7 +285,7 @@ const monthOptions = computed(() => {
 });
 
 const focusLabel = computed(() => {
-  if (viewMode.value === "monthly" && selectedYear.value && selectedMonth.value) {
+  if (selectedYear.value && selectedMonth.value) {
     return `${selectedYear.value}-${String(selectedMonth.value).padStart(2, "0")}`;
   }
   if (selectedYear.value) {
@@ -277,13 +295,13 @@ const focusLabel = computed(() => {
 });
 
 const focusDescription = computed(() =>
-  viewMode.value === "monthly"
-    ? "按月份查看 Weighted Blankets 各磅数的销量和销售额分布。"
-    : "按年份汇总 Weighted Blankets 各磅数的销量和销售额分布。"
+  effectiveViewMode.value === "monthly"
+    ? `按月份查看 ${currentDataset.value.label} 各磅数的销量和销售额分布。`
+    : `按年份汇总 ${currentDataset.value.label} 各磅数的销量和销售额分布。`
 );
 
 const chartSubtitle = computed(() =>
-  viewMode.value === "monthly"
+  effectiveViewMode.value === "monthly"
     ? `按磅数查看当月${metricMode.value === "units" ? "销量" : "销售额"}占比，点击扇区查看商品详情。`
     : `按磅数查看所选年份累计${metricMode.value === "units" ? "销量" : "销售额"}占比，点击扇区查看该磅数下的商品表现。`
 );
@@ -297,7 +315,11 @@ const summaryCards = computed(() =>
 );
 
 const activePoundsLabel = computed(() =>
-  activePounds.value === null ? "-" : `${formatPlainNumber(activePounds.value)} lb`
+  detailData.value?.pounds_label
+    ? `${detailData.value.pounds_label} lb`
+    : activePounds.value === null
+      ? "-"
+      : `${formatPlainNumber(activePounds.value)} lb`
 );
 
 const metricTotal = computed(() =>
@@ -340,11 +362,11 @@ const chartOption = computed<EChartsOption>(() => {
     series: [
       {
         type: "pie",
-        radius: ["38%", "63%"],
-        center: ["50%", "38%"],
+        radius: ["34%", "58%"],
+        center: ["50%", "40%"],
         minAngle: 3,
         clockwise: false,
-        startAngle: 90,
+        startAngle: 120,
         avoidLabelOverlap: true,
         selectedMode: "single",
         itemStyle: {
@@ -386,21 +408,21 @@ const chartOption = computed<EChartsOption>(() => {
 });
 
 async function loadYearMonths(): Promise<void> {
-  availableYearMonths.value = await fetchPgYearMonthsByTable(TARGET_TABLE);
-  if (!availableYearMonths.value.length) return;
+  availableYearMonths.value = await fetchPgYearMonthsByTable(currentDataset.value.table);
+  if (!availableYearMonths.value.length) {
+    selectedYear.value = 0;
+    selectedMonth.value = 0;
+    return;
+  }
   const latest = availableYearMonths.value[0];
-  if (!selectedYear.value) {
-    selectedYear.value = Math.floor(latest / 100);
-  }
-  if (!selectedMonth.value) {
-    selectedMonth.value = latest % 100;
-  }
+  selectedYear.value = Math.floor(latest / 100);
+  selectedMonth.value = 0;
 }
 
 async function loadSummary(): Promise<void> {
-  if (viewMode.value === "monthly" && (!selectedYear.value || !selectedMonth.value)) {
+  if (effectiveViewMode.value === "monthly" && !selectedYear.value) {
     summary.value = {
-      view: "monthly",
+      view: effectiveViewMode.value,
       year: selectedYear.value || null,
       month: selectedMonth.value || null,
       items: [],
@@ -414,14 +436,15 @@ async function loadSummary(): Promise<void> {
   error.value = "";
   try {
     const data = await fetchWeightedBlanketsPoundsSummary({
-      view: viewMode.value,
+      view: effectiveViewMode.value,
       year: selectedYear.value || undefined,
-      month: viewMode.value === "monthly" ? selectedMonth.value || undefined : undefined,
-      table: TARGET_TABLE,
+      month: selectedMonth.value || undefined,
+      bucketStep: currentBucketStep.value,
+      table: currentDataset.value.table,
     });
     summary.value = data;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "加载磅数数据失败";
+    const message = err instanceof Error ? err.message : "鍔犺浇纾呮暟鏁版嵁澶辫触";
     error.value = message;
   } finally {
     loading.value = false;
@@ -436,10 +459,11 @@ async function openDetail(pounds: number): Promise<void> {
   try {
     detailData.value = await fetchWeightedBlanketsPoundsDetail({
       pounds,
-      view: viewMode.value,
+      view: effectiveViewMode.value,
       year: selectedYear.value || undefined,
-      month: viewMode.value === "monthly" ? selectedMonth.value || undefined : undefined,
-      table: TARGET_TABLE,
+      month: selectedMonth.value || undefined,
+      bucketStep: currentBucketStep.value,
+      table: currentDataset.value.table,
     });
   } finally {
     detailLoading.value = false;
@@ -467,16 +491,6 @@ function closeDetail(): void {
   detailOpen.value = false;
   detailData.value = null;
   activePounds.value = null;
-}
-
-function setViewMode(mode: "yearly" | "monthly"): void {
-  viewMode.value = mode;
-  if (mode === "monthly" && !selectedYear.value) {
-    selectedYear.value = yearOptions.value[0] ?? 0;
-  }
-  if (mode === "monthly" && !selectedMonth.value) {
-    selectedMonth.value = monthOptions.value[0] ?? 0;
-  }
 }
 
 function handleChartClick(params: unknown): void {
@@ -546,24 +560,24 @@ function interpolateColor(value: number, min: number, max: number): string {
 }
 
 watch(selectedYear, () => {
-  if (viewMode.value === "monthly" && selectedMonth.value && !monthOptions.value.includes(selectedMonth.value)) {
-    selectedMonth.value = monthOptions.value[0] ?? 0;
+  if (!selectedYear.value && selectedMonth.value) {
+    selectedMonth.value = 0;
     return;
+  }
+  if (selectedMonth.value && !monthOptions.value.includes(selectedMonth.value)) {
+    selectedMonth.value = 0;
   }
   void loadSummary();
 });
 
 watch(selectedMonth, () => {
-  if (viewMode.value !== "monthly") return;
-  if (!selectedMonth.value) return;
   void loadSummary();
 });
 
-watch(viewMode, () => {
-  if (viewMode.value === "monthly" && !selectedMonth.value) {
-    selectedMonth.value = monthOptions.value[0] ?? 0;
-  }
-  void loadSummary();
+watch(datasetMode, async () => {
+  closeDetail();
+  await loadYearMonths();
+  await loadSummary();
 });
 
 onMounted(async () => {
@@ -910,3 +924,5 @@ onMounted(async () => {
   }
 }
 </style>
+
+

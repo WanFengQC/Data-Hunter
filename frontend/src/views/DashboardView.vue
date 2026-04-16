@@ -308,7 +308,7 @@
             <tr>
               <th class="serial-col">序号</th>
               <th v-for="col in growthTop10Columns" :key="`growth-top10-head-${col}`">
-                <span :title="col">{{ columnLabel(col) }}</span>
+                <span :title="col">{{ growthTop10ColumnLabel(col) }}</span>
               </th>
               <th v-if="props.editable" class="growth-edit-col">操作</th>
             </tr>
@@ -1262,6 +1262,11 @@ function columnLabel(col: string): string {
   return FIELD_LABELS[col] || col;
 }
 
+function growthTop10ColumnLabel(col: string): string {
+  if (col === "trends") return "谷歌数据";
+  return columnLabel(col);
+}
+
 async function writeTextToClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
@@ -1907,6 +1912,42 @@ function cellToText(value: unknown): string {
   return String(value);
 }
 
+function normalizeEditTagOptions(values: string[], currentValue = ""): string[] {
+  const current = String(currentValue || "").trim();
+  const seen = new Set<string>();
+  const filtered = values
+    .map((value) => String(value || "").trim())
+    .filter((value) => {
+      if (!value || value === "解析失败") return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+
+  const sorted = filtered
+    .filter((value) => value !== "无效词")
+    .sort((left, right) => {
+      const leftMatch = left.match(/^(\d+)/);
+      const rightMatch = right.match(/^(\d+)/);
+      const leftNum = leftMatch ? Number(leftMatch[1]) : Number.POSITIVE_INFINITY;
+      const rightNum = rightMatch ? Number(rightMatch[1]) : Number.POSITIVE_INFINITY;
+      if (leftNum !== rightNum) return leftNum - rightNum;
+      return left.localeCompare(right, "zh-CN");
+    });
+
+  if (filtered.includes("无效词")) {
+    sorted.push("无效词");
+  }
+  if (current && current !== "解析失败" && !sorted.includes(current)) {
+    if (current === "无效词") {
+      sorted.push(current);
+    } else {
+      sorted.unshift(current);
+    }
+  }
+  return sorted;
+}
+
 function extractQuotedMeaning(reason: unknown): string {
   const text = typeof reason === "string" ? reason.trim() : "";
   if (!text) return "";
@@ -1991,7 +2032,7 @@ async function ensureEditTagOptions(currentValue = ""): Promise<void> {
   if (editTagOptionsLoading.value) return;
   if (editTagOptions.value.length) {
     if (currentValue && !editTagOptions.value.includes(currentValue)) {
-      editTagOptions.value = [currentValue, ...editTagOptions.value];
+      editTagOptions.value = normalizeEditTagOptions(editTagOptions.value, currentValue);
     }
     return;
   }
@@ -2003,10 +2044,10 @@ async function ensureEditTagOptions(currentValue = ""): Promise<void> {
       limit: 5000,
     });
     const values = items.map((item) => String(item.value || "").trim()).filter(Boolean);
-    editTagOptions.value = currentValue && !values.includes(currentValue) ? [currentValue, ...values] : values;
+    editTagOptions.value = normalizeEditTagOptions(values, currentValue);
   } catch (error) {
     console.error("ensureEditTagOptions failed:", error);
-    editTagOptions.value = currentValue ? [currentValue] : [];
+    editTagOptions.value = normalizeEditTagOptions(currentValue ? [currentValue] : [], currentValue);
   } finally {
     editTagOptionsLoading.value = false;
   }
