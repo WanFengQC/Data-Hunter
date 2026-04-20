@@ -9,23 +9,26 @@ from app.core.config import settings
 from app.services.export_jobs import pg_export_jobs
 from pydantic import BaseModel
 
-from app.services.postgres_table import (
-    fetch_asin_aba_history,
-    fetch_asin_detail,
+from app.services.postgres.asin import fetch_asin_aba_history, fetch_asin_detail
+from app.services.postgres.items import (
     fetch_all_items,
     fetch_filter_options,
-    fetch_growth_top10_items,
     fetch_items,
-    fetch_shielded_word_frequency_items,
+    fetch_year_months,
+    stream_items_csv,
+)
+from app.services.postgres.weighted_blankets import (
     fetch_weighted_blankets_pounds_detail,
     fetch_weighted_blankets_pounds_summary,
+)
+from app.services.postgres.word_frequency import (
+    fetch_growth_top10_items,
+    fetch_shielded_word_frequency_items,
     fetch_word_frequency_trend,
     fetch_word_cache_batch,
     shield_word_frequency_items_by_word,
     upsert_word_cache_batch,
     update_word_frequency_item,
-    stream_items_csv,
-    fetch_year_months,
 )
 
 router = APIRouter(prefix="/pg", tags=["postgres"])

@@ -6,7 +6,7 @@ from threading import Lock, Thread
 from typing import Any
 from uuid import uuid4
 
-from app.services.postgres_table import stream_items_csv
+from app.services.postgres.items import stream_items_csv
 
 EXPORT_DIR = Path(__file__).resolve().parents[3] / "tmp_exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
