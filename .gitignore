@@ -24,3 +24,9 @@ backend/scripts/seller_sprite/ara*
 *.csv
 backend/scripts/
 tmp_exports/
+
+excel_table_mapper/.venv
+excel_table_mapper/__pycache__
+excel_table_mapper/build
+excel_table_mapper/*.spec
+

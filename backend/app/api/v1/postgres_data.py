@@ -20,7 +20,9 @@ from app.services.postgres_table import (
     fetch_weighted_blankets_pounds_detail,
     fetch_weighted_blankets_pounds_summary,
     fetch_word_frequency_trend,
+    fetch_word_cache_batch,
     shield_word_frequency_items_by_word,
+    upsert_word_cache_batch,
     update_word_frequency_item,
     stream_items_csv,
     fetch_year_months,
@@ -42,6 +44,21 @@ class WordFrequencyShieldPayload(BaseModel):
     tag_label: str | None = None
     reason: str | None = None
     shielded: bool = True
+
+
+class WordCacheBatchGetPayload(BaseModel):
+    words: list[str]
+
+
+class WordCacheItemPayload(BaseModel):
+    word: str
+    translation_zh: str | None = None
+    tag_label: str | None = None
+    reason: str | None = None
+
+
+class WordCacheBatchUpsertPayload(BaseModel):
+    items: list[WordCacheItemPayload]
 
 
 def _parse_text_filters(raw: str | None) -> dict[str, Any]:
@@ -117,6 +134,39 @@ def get_word_frequency_trend(
             cache_table_name=cache_table,
             items_table_name=items_table,
             word=word,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/word-cache/batch-get")
+def get_word_cache_batch(
+    payload: WordCacheBatchGetPayload = Body(...),
+    schema: str = Query(default=settings.pg_schema),
+    cache_table: str = Query(default="seller_sprite_word_cache"),
+) -> dict:
+    try:
+        items = fetch_word_cache_batch(
+            schema_name=schema,
+            cache_table_name=cache_table,
+            words=payload.words,
+        )
+        return {"items": items, "total": len(items)}
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/word-cache/batch-upsert")
+def put_word_cache_batch(
+    payload: WordCacheBatchUpsertPayload = Body(...),
+    schema: str = Query(default=settings.pg_schema),
+    cache_table: str = Query(default="seller_sprite_word_cache"),
+) -> dict:
+    try:
+        return upsert_word_cache_batch(
+            schema_name=schema,
+            cache_table_name=cache_table,
+            items=[item.model_dump() for item in payload.items],
         )
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc

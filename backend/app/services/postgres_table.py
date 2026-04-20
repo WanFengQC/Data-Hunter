@@ -43,6 +43,7 @@ _PG_POOL_SIZE = 0
 _WORD_SHIELD_TABLE_SUFFIX = "_shield"
 WORD_SHIELD_SCOPE_WORD_FREQUENCY = "word_frequency"
 WORD_SHIELD_SCOPE_ABA = "aba"
+DEFAULT_WORD_CACHE_TABLE = "seller_sprite_word_cache"
 
 
 def _open_pg_connection(*, autocommit: bool = False, row_factory: Any = dict_row) -> psycopg.Connection:
@@ -314,6 +315,132 @@ def _ensure_word_shield_table(
         )
     conn.commit()
     return shield_table_name
+
+
+def _ensure_word_cache_table(
+    conn: psycopg.Connection,
+    schema_name: str,
+    table_name: str = DEFAULT_WORD_CACHE_TABLE,
+) -> str:
+    normalized_table_name = str(table_name or DEFAULT_WORD_CACHE_TABLE).strip() or DEFAULT_WORD_CACHE_TABLE
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema_name)))
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}.{} (
+                    word TEXT PRIMARY KEY,
+                    translation_zh TEXT NULL,
+                    tag_label TEXT NULL,
+                    tag_reason TEXT NULL,
+                    source_scope TEXT NOT NULL DEFAULT 'word_frequency',
+                    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                """
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS translation_zh TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS tag_label TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS tag_reason TEXT NULL").format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS source_scope TEXT NOT NULL DEFAULT {}"
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+                sql.Literal(WORD_SHIELD_SCOPE_WORD_FREQUENCY),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()"
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()"
+            ).format(
+                sql.Identifier(schema_name),
+                sql.Identifier(normalized_table_name),
+            )
+        )
+    conn.commit()
+    _invalidate_table_profile(schema_name, normalized_table_name)
+    return normalized_table_name
+
+
+def _upsert_word_cache_row(
+    conn: psycopg.Connection,
+    schema_name: str,
+    table_name: str,
+    *,
+    word: str,
+    translation_zh: str | None = None,
+    tag_label: str | None = None,
+    tag_reason: str | None = None,
+) -> None:
+    normalized_word = str(word or "").strip().lower()
+    if not normalized_word:
+        return
+
+    normalized_translation = str(translation_zh or "").strip() or None
+    normalized_tag_label = str(tag_label or "").strip() or None
+    normalized_tag_reason = str(tag_reason or "").strip() or None
+    query = sql.SQL(
+        """
+        INSERT INTO {}.{} (word, translation_zh, tag_label, tag_reason, source_scope, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (word)
+        DO UPDATE SET
+            translation_zh = COALESCE(EXCLUDED.translation_zh, {}.{}.translation_zh),
+            tag_label = COALESCE(EXCLUDED.tag_label, {}.{}.tag_label),
+            tag_reason = COALESCE(EXCLUDED.tag_reason, {}.{}.tag_reason),
+            updated_at = NOW()
+        """
+    ).format(
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+        sql.Identifier(schema_name),
+        sql.Identifier(table_name),
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            query,
+            (
+                normalized_word,
+                normalized_translation,
+                normalized_tag_label,
+                normalized_tag_reason,
+                WORD_SHIELD_SCOPE_WORD_FREQUENCY,
+            ),
+        )
 
 
 def _resolve_selected_columns(
@@ -997,6 +1124,18 @@ def update_word_frequency_item(
 
         if not row:
             raise ValueError("Item not found")
+
+        cache_table_name = _ensure_word_cache_table(conn, schema_name, DEFAULT_WORD_CACHE_TABLE)
+        _upsert_word_cache_row(
+            conn,
+            schema_name,
+            cache_table_name,
+            word=str(row.get("word") or ""),
+            translation_zh=str(row.get("word_zh") or "").strip() or None,
+            tag_label=str(row.get("标签") or "").strip() or None,
+            tag_reason=str(row.get("原因") or "").strip() or None,
+        )
+        conn.commit()
 
     item: dict[str, Any] = {}
     for key, value in row.items():
@@ -1789,6 +1928,112 @@ def fetch_word_frequency_trend(
         "points": points,
         "latest_year_month": latest_year_month,
     }
+
+
+def fetch_word_cache_batch(
+    schema_name: str,
+    cache_table_name: str,
+    words: list[str],
+) -> dict[str, dict[str, Any]]:
+    normalized_words = sorted({str(item or "").strip().lower() for item in (words or []) if str(item or "").strip()})
+    if not normalized_words:
+        return {}
+
+    output: dict[str, dict[str, Any]] = {}
+    with pg_connect() as conn:
+        profile = _get_table_profile(conn, schema_name, cache_table_name)
+        if not profile["exists"]:
+            return {}
+
+        valid_columns = profile["valid_columns"]
+        select_fields: list[sql.SQL] = [sql.SQL("word")]
+        if "translation_zh" in valid_columns:
+            select_fields.append(sql.SQL("translation_zh"))
+        elif "word_zh" in valid_columns:
+            select_fields.append(sql.SQL("word_zh AS translation_zh"))
+        else:
+            select_fields.append(sql.SQL("NULL::text AS translation_zh"))
+
+        if "tag_label" in valid_columns:
+            select_fields.append(sql.SQL("tag_label"))
+        elif "标签" in valid_columns:
+            select_fields.append(sql.SQL("{} AS tag_label").format(sql.Identifier("标签")))
+        else:
+            select_fields.append(sql.SQL("NULL::text AS tag_label"))
+
+        if "tag_reason" in valid_columns:
+            select_fields.append(sql.SQL("tag_reason"))
+        elif "原因" in valid_columns:
+            select_fields.append(sql.SQL("{} AS tag_reason").format(sql.Identifier("原因")))
+        else:
+            select_fields.append(sql.SQL("NULL::text AS tag_reason"))
+
+        query = sql.SQL(
+            """
+            SELECT {}
+            FROM {}.{}
+            WHERE word = ANY(%s)
+            """
+        ).format(
+            sql.SQL(", ").join(select_fields),
+            sql.Identifier(schema_name),
+            sql.Identifier(cache_table_name),
+        )
+        with conn.cursor() as cur:
+            cur.execute(query, (normalized_words,))
+            rows = cur.fetchall()
+
+    for row in rows:
+        word = str(row.get("word") or "").strip().lower()
+        if not word:
+            continue
+        output[word] = {
+            "translation_zh": str(row.get("translation_zh") or "").strip() or None,
+            "tag_label": str(row.get("tag_label") or "").strip() or None,
+            "reason": str(row.get("tag_reason") or "").strip() or None,
+        }
+    return output
+
+
+def upsert_word_cache_batch(
+    schema_name: str,
+    cache_table_name: str,
+    items: list[dict[str, Any]],
+) -> dict[str, int]:
+    normalized_items: list[dict[str, Any]] = []
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        word = str(raw.get("word") or "").strip().lower()
+        if not word:
+            continue
+        normalized_items.append(
+            {
+                "word": word,
+                "translation_zh": str(raw.get("translation_zh") or "").strip() or None,
+                "tag_label": str(raw.get("tag_label") or "").strip() or None,
+                "tag_reason": str(raw.get("reason") or raw.get("tag_reason") or "").strip() or None,
+            }
+        )
+
+    if not normalized_items:
+        return {"upserted_count": 0}
+
+    with pg_connect() as conn:
+        table_name = _ensure_word_cache_table(conn, schema_name, cache_table_name)
+        for item in normalized_items:
+            _upsert_word_cache_row(
+                conn,
+                schema_name,
+                table_name,
+                word=item["word"],
+                translation_zh=item["translation_zh"],
+                tag_label=item["tag_label"],
+                tag_reason=item["tag_reason"],
+            )
+        conn.commit()
+
+    return {"upserted_count": len(normalized_items)}
 
 
 def _normalize_asin(value: Any) -> str:
