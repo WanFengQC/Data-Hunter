@@ -4,6 +4,7 @@ setlocal
 set "ROOT_DIR=%~dp0"
 set "FRONTEND_DIR=%ROOT_DIR%frontend"
 set "FRONTEND_PORT=5173"
+set "VITE_API_TARGET=http://127.0.0.1:8000"
 
 call :kill_port "%FRONTEND_PORT%"
 
@@ -29,6 +30,7 @@ if not exist "node_modules" (
 echo.
 echo Starting frontend dev server...
 echo URL: http://127.0.0.1:%FRONTEND_PORT%
+echo API Target: %VITE_API_TARGET%
 echo.
 
 call npm run dev

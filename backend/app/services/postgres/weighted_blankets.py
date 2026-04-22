@@ -24,8 +24,8 @@ def _weighted_blankets_required_columns(profile: dict[str, Any]) -> bool:
         "dimensions",
         "sellername",
         "price",
-        "totalunits",
-        "totalamount",
+        "amzunit",
+        "subtotalamount",
         "year_month",
     }
     return required_columns.issubset(profile.get("valid_columns", set()))
@@ -84,6 +84,8 @@ def _build_weighted_blankets_scope_sql(
         WITH filtered AS (
             SELECT
                 t.*,
+                NULLIF(regexp_replace(trim(coalesce(CAST(t.amzunit AS TEXT), '')), '[^0-9.\\-]', '', 'g'), '')::DOUBLE PRECISION AS child_units_value,
+                NULLIF(regexp_replace(trim(coalesce(CAST(t.subtotalamount AS TEXT), '')), '[^0-9.\\-]', '', 'g'), '')::DOUBLE PRECISION AS child_amount_value,
                 CASE
                     WHEN substring(lower(coalesce(CAST(t.title AS TEXT), '')) FROM '([0-9]+(\\.[0-9]+)?)\\s*(lb|lbs|pound|pounds)') IS NOT NULL
                     THEN CAST(substring(lower(coalesce(CAST(t.title AS TEXT), '')) FROM '([0-9]+(\\.[0-9]+)?)\\s*(lb|lbs|pound|pounds)') AS DOUBLE PRECISION)
@@ -92,13 +94,18 @@ def _build_weighted_blankets_scope_sql(
             FROM {}.{} t
             {}
         ),
-        scoped AS (
+        scoped_raw AS (
             SELECT
                 f.*,
                 {} AS pounds_bucket
             FROM filtered f
             WHERE f.pounds_value IS NOT NULL
               AND f.pounds_value BETWEEN 1 AND 35
+              AND (f.child_units_value IS NOT NULL OR f.child_amount_value IS NOT NULL)
+              AND (
+                    trim(coalesce(CAST(f.parent AS TEXT), '')) = ''
+                    OR upper(trim(CAST(f.parent AS TEXT))) <> upper(trim(CAST(f.asin AS TEXT)))
+              )
               AND NOT EXISTS (
                   SELECT 1
                   FROM {}.{} c
@@ -106,6 +113,25 @@ def _build_weighted_blankets_scope_sql(
                     AND trim(coalesce(CAST(c.parent AS TEXT), '')) <> ''
                     AND upper(trim(CAST(c.parent AS TEXT))) = upper(trim(CAST(f.asin AS TEXT)))
               )
+        ),
+        scoped AS (
+            SELECT
+                MAX(title) AS title,
+                MAX(brand) AS brand,
+                MAX(imageurl) AS imageurl,
+                MAX(weight) AS weight,
+                MAX(dimensions) AS dimensions,
+                MAX(sellername) AS sellername,
+                MAX(parent) AS parent,
+                MAX(asin) AS asin,
+                year_month,
+                MAX(price) AS price,
+                MAX(pounds_value) AS pounds_value,
+                MAX(pounds_bucket) AS pounds_bucket,
+                COALESCE(MIN(NULLIF(child_units_value, 0)), MAX(child_units_value)) AS child_units_value,
+                COALESCE(MIN(NULLIF(child_amount_value, 0)), MAX(child_amount_value)) AS child_amount_value
+            FROM scoped_raw
+            GROUP BY year_month, upper(trim(CAST(asin AS TEXT)))
         )
         """
     ).format(
@@ -174,9 +200,9 @@ def fetch_weighted_blankets_pounds_summary(
                 SELECT
                     pounds_bucket AS pounds,
                     (pounds_bucket + %s) AS pounds_to,
-                    COUNT(*) AS product_count,
-                    COALESCE(SUM(totalunits), 0) AS total_units,
-                    COALESCE(SUM(totalamount), 0) AS total_amount,
+                    COUNT(DISTINCT upper(trim(CAST(asin AS TEXT)))) AS product_count,
+                    COALESCE(SUM(child_units_value), 0) AS total_units,
+                    COALESCE(SUM(child_amount_value), 0) AS total_amount,
                     AVG(price) AS avg_price,
                     COUNT(DISTINCT year_month) AS active_periods
                 FROM scoped
@@ -266,9 +292,9 @@ def fetch_weighted_blankets_pounds_detail(
         summary_template = sql.SQL(
             """
             SELECT
-                COUNT(*) AS product_count,
-                COALESCE(SUM(totalunits), 0) AS total_units,
-                COALESCE(SUM(totalamount), 0) AS total_amount,
+                COUNT(DISTINCT upper(trim(CAST(asin AS TEXT)))) AS product_count,
+                COALESCE(SUM(child_units_value), 0) AS total_units,
+                COALESCE(SUM(child_amount_value), 0) AS total_amount,
                 AVG(price) AS avg_price,
                 COUNT(DISTINCT year_month) AS active_periods
             FROM scoped
@@ -286,8 +312,8 @@ def fetch_weighted_blankets_pounds_detail(
                 MAX(dimensions) AS dimensions,
                 MAX(sellername) AS sellername,
                 MAX(parent) AS parent,
-                COALESCE(SUM(totalunits), 0) AS total_units,
-                COALESCE(SUM(totalamount), 0) AS total_amount,
+                COALESCE(SUM(child_units_value), 0) AS total_units,
+                COALESCE(SUM(child_amount_value), 0) AS total_amount,
                 AVG(price) AS avg_price,
                 COUNT(DISTINCT year_month) AS active_periods,
                 MAX(year_month) AS latest_year_month

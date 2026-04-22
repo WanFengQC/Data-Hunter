@@ -58,7 +58,7 @@ echo Starting FastAPI server...
 echo URL: http://127.0.0.1:%BACKEND_PORT%/docs
 echo.
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT%
+call "%VENV_PYTHON%" -m uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT%
 
 if errorlevel 1 (
   echo.

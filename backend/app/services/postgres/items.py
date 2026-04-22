@@ -1,7 +1,7 @@
 ﻿import csv
 from io import StringIO
 from time import monotonic
-from typing import Any
+from typing import Any, Iterator
 
 from psycopg import sql
 

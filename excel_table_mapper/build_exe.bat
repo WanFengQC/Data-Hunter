@@ -16,13 +16,14 @@ if not exist .venv (
   --onefile ^
   --windowed ^
   --paths src ^
-  --name ExcelTableMapper ^
+  --name TrafficAnalysisTool ^
   --collect-all openai ^
   --collect-all psycopg ^
   --collect-all socksio ^
+  --collect-all tkinterdnd2 ^
   --add-data "assets\seed_word_cache.sqlite3;assets" ^
   desktop_app.py
 
 echo.
-echo 构建完成：dist\ExcelTableMapper.exe
+echo 构建完成：dist\TrafficAnalysisTool.exe
 pause

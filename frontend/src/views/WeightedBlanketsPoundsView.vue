@@ -444,7 +444,7 @@ async function loadSummary(): Promise<void> {
     });
     summary.value = data;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "鍔犺浇纾呮暟鏁版嵁澶辫触";
+    const message = err instanceof Error ? err.message : "加载磅数数据失败";
     error.value = message;
   } finally {
     loading.value = false;
