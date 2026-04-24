@@ -28,6 +28,23 @@
           <h3>筛选</h3>
         </div>
         <div class="report-filter-layout">
+          <div class="report-filter-group report-filter-group-market">
+            <div class="report-filter-stack">
+              <span class="report-filter-label">市场</span>
+            </div>
+            <div class="report-tab-row">
+              <button
+                v-for="item in marketOptions"
+                :key="item.path"
+                type="button"
+                class="report-tab-btn"
+                :class="{ active: item.path === currentMarketPath }"
+                @click="selectMarket(item.path)"
+              >
+                {{ item.locale }}
+              </button>
+            </div>
+          </div>
           <div class="report-filter-group report-filter-group-category">
             <div class="report-filter-stack">
               <span class="report-filter-label">分类</span>
@@ -137,6 +154,7 @@
         <div class="report-panel-header">
           <h3>年度月度汇总</h3>
           <div class="report-chip-group">
+            <span class="report-chip">市场 {{ currentMarketLabel }}</span>
             <span class="report-chip">分类 {{ currentCategoryLabel }}</span>
             <span class="report-chip">快照 {{ focusLabel }}</span>
           </div>
@@ -251,11 +269,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { EChartsOption } from "echarts";
 import ReportChart from "@/components/ReportChart.vue";
 import { fetchPgAllItems } from "@/api/data";
+import { inferMarketCategory, MARKET_CATEGORY_CANADA, MARKET_CATEGORY_UNITED_STATES } from "@/utils/marketCategory";
 
 type Row = Record<string, unknown>;
 type Metric = { label: string; value: string };
@@ -264,8 +283,6 @@ type ConcentrationMetricMode = "units" | "amount";
 type Dist = { label: string; count: number; units: number; share: number; extra?: number; name?: string; key?: string; rows?: Row[]; row?: Row; amount?: number; newAmount?: number; newCount?: number; entityLabel?: string };
 type MonthSum = { ym: number; label: string; amount: number; units: number; avgBsr: number | null };
 type CategoryOption = { path: string; locale: string };
-const CATEGORY_TEDDY = "Toys & Games:Stuffed Animals & Plush Toys:Stuffed Animals & Teddy Bears";
-const CATEGORY_PILLOWS = "Toys & Games:Stuffed Animals & Plush Toys:Plush Pillows";
 const CATEGORY_ALL = "ALL";
 const CONCENTRATION_TOP_LIMIT = 50;
 const NIUNIU_DADDY_BRAND_KEY = "niuniudaddy";
@@ -284,6 +301,7 @@ const REPORT_COLUMNS = [
   "sellername",
   "sellernation",
   "sellertype",
+  "source_path",
   "title",
   "totalamount",
   "totalunits",
@@ -318,10 +336,12 @@ const SELLER_NATION_ZH: Record<string, string> = {
   PH: "菲律宾",
   NA: "未知",
 };
-const route = useRoute(), router = useRouter(), loading = ref(true), loadingText = ref("准备数据..."), error = ref(""), allRows = ref<Row[]>([]), activeCategoryPath = ref(""), monthHeaders = [1,2,3,4,5,6,7,8,9,10,11,12];
+const route = useRoute(), router = useRouter(), loading = ref(true), loadingText = ref("准备数据..."), error = ref(""), allRows = ref<Row[]>([]), activeMarketPath = ref(""), activeCategoryPath = ref(""), monthHeaders = [1,2,3,4,5,6,7,8,9,10,11,12];
 const selectedYear = computed(() => Number(route.query.year || 0) || 0), selectedMonth = computed(() => Number(route.query.month || 0) || 0);
 const selectedBrand = computed(() => String(route.query.brand || "").trim());
 const selectedAsin = computed(() => String(route.query.asin || "").trim());
+const selectedMarketQuery = computed(() => String(route.query.market || "").trim());
+const selectedCategoryQuery = computed(() => String(route.query.category || "").trim());
 const switchingFilters = ref(false);
 const productConcentrationMetric = ref<ConcentrationMetricMode>("units");
 const brandConcentrationMetric = ref<ConcentrationMetricMode>("units");
@@ -577,17 +597,19 @@ const formatCurrency = fc;
 const formatPercent = fp;
 const formatWan = fw;
 const formatWanNumber = fwn;
+function normalizeMarketPath(value: unknown): string {
+  return inferMarketCategory(value);
+}
 function normalizeCategoryPath(value: unknown): string {
-  const text = t(value);
-  if (!text) return "";
-  if (text.includes("Plush Pillows")) return CATEGORY_PILLOWS;
-  if (text.includes("Stuffed Animals & Teddy Bears")) return CATEGORY_TEDDY;
-  return "";
+  const path = t(value);
+  if (!path) return "未分类";
+  const top = path.split(":")[0]?.trim() || path;
+  return top || "未分类";
 }
 function getCategoryLabel(path: string): string {
   if (path === CATEGORY_ALL) return CATEGORY_ALL;
-  if (path === CATEGORY_PILLOWS) return "Plush Pillows";
-  if (path === CATEGORY_TEDDY) return "Stuffed Animals & Teddy Bears";
+  if (path === MARKET_CATEGORY_CANADA) return MARKET_CATEGORY_CANADA;
+  if (path === MARKET_CATEGORY_UNITED_STATES) return MARKET_CATEGORY_UNITED_STATES;
   return path;
 }
 function normalizeBrandKey(value: unknown): string {
@@ -602,9 +624,23 @@ function applyReportRowPatches(rows: Row[]): Row[] {
 }
 const group = (rows: Row[], field: string) => { const total = sum(rows.map(r => n(r.totalunits))); const m = new Map<string, RankRow>(); rows.forEach(row => { const key = t(row[field]) || "未知"; const cur = m.get(key) || { name:key,count:0,units:0,amount:0,newUnits:0,newAmount:0,newCount:0,share:0 }; const units = n(row.totalunits) || 0; const amount = n(row.totalamount) || 0; cur.count += 1; cur.units += units; cur.amount += amount; if (isNew(row)) { cur.newUnits += units; cur.newAmount += amount; cur.newCount += 1; } m.set(key, cur); }); return [...m.values()].sort((a,b)=>b.units-a.units).map(r => ({ ...r, share: total ? r.units/total : 0 })); };
 const bucket = (rows: Row[], getter: (row: Row) => number | null, edges: number[], labels: string[]) => { const total = sum(rows.map(r => n(r.totalunits))); const out = labels.map(label => ({ label, count:0, units:0, share:0, rows: [] as Row[] })); rows.forEach(row => { const value = getter(row); if (value === null) return; for (let i=0;i<edges.length-1;i+=1) if (value >= edges[i] && value < edges[i+1]) { out[i].count += 1; out[i].units += n(row.totalunits) || 0; out[i].rows.push(row); break; } }); out.forEach(item => item.share = total ? item.units/total : 0); return out; };
+const marketOptions = computed<CategoryOption[]>(() => [
+  { path: CATEGORY_ALL, locale: CATEGORY_ALL },
+  { path: MARKET_CATEGORY_UNITED_STATES, locale: MARKET_CATEGORY_UNITED_STATES },
+  { path: MARKET_CATEGORY_CANADA, locale: MARKET_CATEGORY_CANADA },
+]);
+const selectedMarket = computed(() =>
+  marketOptions.value.find((item) => item.path === activeMarketPath.value) || marketOptions.value[0]
+);
+const currentMarketPath = computed(() => selectedMarket.value.path);
+const currentMarketLabel = computed(() => selectedMarket.value.locale);
+const marketRows = computed(() => {
+  if (currentMarketPath.value === CATEGORY_ALL) return allRows.value;
+  return allRows.value.filter((row) => normalizeMarketPath(row.source_path) === currentMarketPath.value);
+});
 const categoryOptions = computed<CategoryOption[]>(() => {
   const map = new Map<string, string>();
-  allRows.value.forEach((row) => {
+  marketRows.value.forEach((row) => {
     const path = normalizeCategoryPath(row.nodelabelpath);
     if (!path || map.has(path)) return;
     map.set(path, path);
@@ -620,8 +656,8 @@ const currentCategoryPath = computed(() => selectedCategory.value?.path || CATEG
 const currentCategoryLabel = computed(() => selectedCategory.value?.locale || CATEGORY_ALL);
 const categoryRows = computed(() => {
   const current = selectedCategory.value;
-  if (!current || current.path === CATEGORY_ALL) return allRows.value;
-  return allRows.value.filter((row) => normalizeCategoryPath(row.nodelabelpath) === current.path);
+  if (!current || current.path === CATEGORY_ALL) return marketRows.value;
+  return marketRows.value.filter((row) => normalizeCategoryPath(row.nodelabelpath) === current.path);
 });
 const patchedCategoryRows = computed(() => applyReportRowPatches(categoryRows.value));
 const historyByMonth = computed<MonthSum[]>(() => { const m = new Map<number, { amount:number; units:number; bsrs:number[] }>(); patchedCategoryRows.value.forEach(row => { const key = ym(row); if (!key) return; const cur = m.get(key) || { amount:0, units:0, bsrs:[] }; cur.amount += n(row.totalamount) || 0; cur.units += n(row.totalunits) || 0; if (n(row.bsrrank) !== null) cur.bsrs.push(n(row.bsrrank)!); m.set(key, cur); }); return [...m.entries()].map(([key, cur]) => ({ ym:key, label:fmtYm(key), amount:cur.amount, units:cur.units, avgBsr:avg(cur.bsrs) })).sort((a,b)=>a.ym-b.ym); });
@@ -1116,17 +1152,33 @@ async function loadAllRows() {
   });
   allRows.value = data.items || [];
 }
-function selectCategory(path: string) { activeCategoryPath.value = path; }
-function updateReportQuery(nextYear: number, nextMonth: number) {
-  if (nextYear === selectedYear.value && nextMonth === selectedMonth.value) return;
-  switchingFilters.value = true;
+function syncReportQuery(nextYear: number, nextMonth: number, nextMarket: string, nextCategory: string) {
   router.replace({
     query: {
       ...route.query,
       year: nextYear || undefined,
       month: nextMonth || undefined,
+      market: nextMarket !== CATEGORY_ALL ? nextMarket : undefined,
+      category: nextCategory !== CATEGORY_ALL ? nextCategory : undefined,
     },
   });
+}
+function selectCategory(path: string) {
+  activeCategoryPath.value = path;
+  syncReportQuery(selectedYear.value, selectedMonth.value, currentMarketPath.value, path);
+}
+function selectMarket(path: string) {
+  activeMarketPath.value = path;
+  const nextCategory = categoryOptions.value.some((item) => item.path === activeCategoryPath.value)
+    ? activeCategoryPath.value
+    : CATEGORY_ALL;
+  if (nextCategory !== activeCategoryPath.value) activeCategoryPath.value = nextCategory;
+  syncReportQuery(selectedYear.value, selectedMonth.value, path, nextCategory);
+}
+function updateReportQuery(nextYear: number, nextMonth: number) {
+  if (nextYear === selectedYear.value && nextMonth === selectedMonth.value) return;
+  switchingFilters.value = true;
+  syncReportQuery(nextYear, nextMonth, currentMarketPath.value, currentCategoryPath.value);
   window.setTimeout(() => {
     switchingFilters.value = false;
   }, 320);
@@ -1248,9 +1300,14 @@ const goBack = () => router.push({
   query:{
     year:selectedYear.value || undefined,
     month:selectedMonth.value || undefined,
+    market:currentMarketPath.value !== CATEGORY_ALL ? currentMarketPath.value : undefined,
     brand:selectedBrand.value || undefined,
     asin:selectedAsin.value || undefined,
   },
+});
+watch(activeMarketPath, () => {
+  if (categoryOptions.value.some((item) => item.path === activeCategoryPath.value)) return;
+  activeCategoryPath.value = categoryOptions.value[0]?.path || CATEGORY_ALL;
 });
 onMounted(async () => {
   loading.value = true;
@@ -1258,6 +1315,14 @@ onMounted(async () => {
   try {
     await loadAllRows();
     if (!allRows.value.length) error.value = "没有可用于生成报告的竞品数据。";
+    if (selectedMarketQuery.value && marketOptions.value.some((item) => item.path === selectedMarketQuery.value)) {
+      activeMarketPath.value = selectedMarketQuery.value;
+    } else {
+      activeMarketPath.value = CATEGORY_ALL;
+    }
+    if (selectedCategoryQuery.value && categoryOptions.value.some((item) => item.path === selectedCategoryQuery.value)) {
+      activeCategoryPath.value = selectedCategoryQuery.value;
+    }
     if (!activeCategoryPath.value && categoryOptions.value.length) activeCategoryPath.value = categoryOptions.value[0].path;
   } catch (err) {
     console.error("load competitor report failed:", err);
@@ -1506,6 +1571,10 @@ onMounted(async () => {
 
 .report-filter-group-category {
   flex: 1 1 680px;
+}
+
+.report-filter-group-market {
+  flex: 1 1 280px;
 }
 
 .report-filter-field {

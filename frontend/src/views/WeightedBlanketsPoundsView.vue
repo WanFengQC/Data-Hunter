@@ -9,15 +9,15 @@
       <div class="pounds-hero-stats">
         <article class="pounds-stat-card">
           <span class="pounds-stat-label">磅数档位</span>
-          <strong>{{ summary.items.length }}</strong>
+          <strong>{{ loading ? "加载中..." : summary.items.length }}</strong>
         </article>
         <article class="pounds-stat-card">
           <span class="pounds-stat-label">总销量</span>
-          <strong>{{ formatNumber(summary.total_units) }}</strong>
+          <strong>{{ loading ? "加载中..." : formatNumber(summary.total_units) }}</strong>
         </article>
         <article class="pounds-stat-card">
           <span class="pounds-stat-label">总销售额</span>
-          <strong>{{ formatCurrency(summary.total_amount) }}</strong>
+          <strong>{{ loading ? "加载中..." : formatCurrency(summary.total_amount) }}</strong>
         </article>
       </div>
     </section>
@@ -121,7 +121,8 @@
           <p>显示全部磅数档位，点击任一卡片或图表扇区即可查看商品明细。</p>
         </div>
       </div>
-      <div class="pounds-summary-grid">
+      <div v-if="loading" class="pounds-loading">加载中...</div>
+      <div v-else class="pounds-summary-grid">
         <button
           v-for="item in summaryCards"
           :key="item.pounds_label"
@@ -223,7 +224,7 @@
   </main>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { EChartsOption } from "echarts";
 
 import ReportChart from "@/components/ReportChart.vue";
@@ -276,6 +277,12 @@ const detailOpen = ref(false);
 const detailLoading = ref(false);
 const detailData = ref<WeightedBlanketsPoundsDetailResponse | null>(null);
 const activePounds = ref<number | null>(null);
+let summaryAbortController: AbortController | null = null;
+let detailAbortController: AbortController | null = null;
+let datasetLoadToken = 0;
+let summaryLoadToken = 0;
+let detailLoadToken = 0;
+let isApplyingDatasetSelection = false;
 
 const currentDataset = computed(() => DATASET_CONFIG[datasetMode.value]);
 const effectiveViewMode = computed<"yearly" | "monthly">(() =>
@@ -380,7 +387,7 @@ const chartOption = computed<EChartsOption>(() => {
         clockwise: false,
         startAngle: 120,
         avoidLabelOverlap: true,
-        selectedMode: "single",
+        selectedMode: false,
         itemStyle: {
           borderRadius: 8,
           borderColor: "#ffffff",
@@ -419,16 +426,31 @@ const chartOption = computed<EChartsOption>(() => {
   };
 });
 
-async function loadYearMonths(): Promise<void> {
-  availableYearMonths.value = await fetchPgYearMonthsByTable(currentDataset.value.table);
-  if (!availableYearMonths.value.length) {
-    selectedYear.value = 0;
+function isCanceledError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const maybe = err as { code?: string; name?: string };
+  return maybe.code === "ERR_CANCELED" || maybe.name === "CanceledError";
+}
+
+async function loadYearMonths(token: number): Promise<void> {
+  const table = currentDataset.value.table;
+  const months = await fetchPgYearMonthsByTable(table);
+  if (token !== datasetLoadToken) return;
+
+  availableYearMonths.value = months;
+  isApplyingDatasetSelection = true;
+  try {
+    if (!availableYearMonths.value.length) {
+      selectedYear.value = 0;
+      selectedMonth.value = 0;
+      return;
+    }
+    const latest = availableYearMonths.value[0];
+    selectedYear.value = Math.floor(latest / 100);
     selectedMonth.value = 0;
-    return;
+  } finally {
+    isApplyingDatasetSelection = false;
   }
-  const latest = availableYearMonths.value[0];
-  selectedYear.value = Math.floor(latest / 100);
-  selectedMonth.value = 0;
 }
 
 async function loadSummary(): Promise<void> {
@@ -444,6 +466,11 @@ async function loadSummary(): Promise<void> {
     };
     return;
   }
+  const requestToken = ++summaryLoadToken;
+  summaryAbortController?.abort();
+  const controller = new AbortController();
+  summaryAbortController = controller;
+
   loading.value = true;
   error.value = "";
   try {
@@ -453,32 +480,51 @@ async function loadSummary(): Promise<void> {
       month: selectedMonth.value || undefined,
       bucketStep: currentBucketStep.value,
       table: currentDataset.value.table,
+      signal: controller.signal,
     });
+    if (requestToken !== summaryLoadToken) return;
     summary.value = data;
   } catch (err) {
+    if (isCanceledError(err)) return;
     const message = err instanceof Error ? err.message : "加载磅数数据失败";
     error.value = message;
   } finally {
-    loading.value = false;
+    if (requestToken === summaryLoadToken) {
+      loading.value = false;
+    }
   }
 }
 
 async function openDetail(pounds: number): Promise<void> {
+  const requestToken = ++detailLoadToken;
+  detailAbortController?.abort();
+  const controller = new AbortController();
+  detailAbortController = controller;
+
   activePounds.value = pounds;
   detailOpen.value = true;
   detailLoading.value = true;
   detailData.value = null;
   try {
-    detailData.value = await fetchWeightedBlanketsPoundsDetail({
+    const data = await fetchWeightedBlanketsPoundsDetail({
       pounds,
       view: effectiveViewMode.value,
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
       bucketStep: currentBucketStep.value,
       table: currentDataset.value.table,
+      signal: controller.signal,
     });
+    if (requestToken !== detailLoadToken) return;
+    detailData.value = data;
+  } catch (err) {
+    if (!isCanceledError(err)) {
+      detailData.value = null;
+    }
   } finally {
-    detailLoading.value = false;
+    if (requestToken === detailLoadToken) {
+      detailLoading.value = false;
+    }
   }
 }
 
@@ -500,6 +546,7 @@ function formatSecondaryMetricValue(item: WeightedBlanketsPoundsSummaryItem): st
 }
 
 function closeDetail(): void {
+  detailAbortController?.abort();
   detailOpen.value = false;
   detailData.value = null;
   activePounds.value = null;
@@ -572,6 +619,7 @@ function interpolateColor(value: number, min: number, max: number): string {
 }
 
 watch(selectedYear, () => {
+  if (isApplyingDatasetSelection) return;
   if (!selectedYear.value && selectedMonth.value) {
     selectedMonth.value = 0;
     return;
@@ -583,18 +631,36 @@ watch(selectedYear, () => {
 });
 
 watch(selectedMonth, () => {
+  if (isApplyingDatasetSelection) return;
   void loadSummary();
 });
 
-watch(datasetMode, async () => {
+watch(datasetMode, () => {
+  datasetLoadToken += 1;
+  const token = datasetLoadToken;
+  summaryAbortController?.abort();
+  loading.value = true;
   closeDetail();
-  await loadYearMonths();
-  await loadSummary();
+  void (async () => {
+    await loadYearMonths(token);
+    if (token !== datasetLoadToken) return;
+    await loadSummary();
+  })();
 });
 
-onMounted(async () => {
-  await loadYearMonths();
-  await loadSummary();
+onMounted(() => {
+  datasetLoadToken += 1;
+  const token = datasetLoadToken;
+  void (async () => {
+    await loadYearMonths(token);
+    if (token !== datasetLoadToken) return;
+    await loadSummary();
+  })();
+});
+
+onBeforeUnmount(() => {
+  summaryAbortController?.abort();
+  detailAbortController?.abort();
 });
 </script>
 

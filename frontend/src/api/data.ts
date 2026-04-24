@@ -325,6 +325,7 @@ export async function fetchWeightedBlanketsPoundsSummary(params: {
   month?: number;
   bucketStep?: number;
   table?: string;
+  signal?: AbortSignal;
 }): Promise<WeightedBlanketsPoundsSummaryResponse> {
   const { data } = await apiClient.get<WeightedBlanketsPoundsSummaryResponse>(
     "/pg/weighted-blankets/pounds-summary",
@@ -336,6 +337,7 @@ export async function fetchWeightedBlanketsPoundsSummary(params: {
         bucket_step: params.bucketStep,
         table: params.table,
       },
+      signal: params.signal,
     }
   );
   return data;
@@ -349,6 +351,7 @@ export async function fetchWeightedBlanketsPoundsDetail(params: {
   bucketStep?: number;
   limit?: number;
   table?: string;
+  signal?: AbortSignal;
 }): Promise<WeightedBlanketsPoundsDetailResponse> {
   const { data } = await apiClient.get<WeightedBlanketsPoundsDetailResponse>(
     "/pg/weighted-blankets/pounds-detail",
@@ -362,6 +365,7 @@ export async function fetchWeightedBlanketsPoundsDetail(params: {
         limit: params.limit ?? 100,
         table: params.table,
       },
+      signal: params.signal,
     }
   );
   return data;

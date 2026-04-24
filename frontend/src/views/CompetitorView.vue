@@ -1,7 +1,12 @@
-<template>
+﻿<template>
   <main class="dashboard competitor-page">
     <section class="table-panel competitor-panel">
       <div class="table-filters toolbar-filters competitor-filters">
+        <div class="market-switch" role="group" aria-label="市场切换">
+          <button type="button" class="market-switch-btn" :class="{ active: selectedMarket === 'ALL' }" @click="selectedMarket = 'ALL'">全部</button>
+          <button type="button" class="market-switch-btn" :class="{ active: selectedMarket === 'UNITED_STATES' }" @click="selectedMarket = 'UNITED_STATES'">United States</button>
+          <button type="button" class="market-switch-btn" :class="{ active: selectedMarket === 'CANADA' }" @click="selectedMarket = 'CANADA'">Canada</button>
+        </div>
         <label class="toolbar-search-field">
           品牌
           <input
@@ -20,6 +25,10 @@
             @keydown.enter.prevent="applyQuickSearch"
           />
         </label>
+        <button class="secondary-btn" type="button" @click="applyQuickSearch">搜索</button>
+        <button class="secondary-btn" type="button" @click="resetQuickSearch" :disabled="!hasQuickSearch">
+          清空搜索
+        </button>
         <label>
           年份
           <select v-model.number="selectedYear">
@@ -53,10 +62,6 @@
             <option value="asc">升序</option>
           </select>
         </label>
-        <button class="secondary-btn" type="button" @click="applyQuickSearch">搜索</button>
-        <button class="secondary-btn" type="button" @click="resetQuickSearch" :disabled="!hasQuickSearch">
-          清空搜索
-        </button>
         <button class="secondary-btn" type="button" @click="exportCsv" :disabled="!total || exportLoading">
           {{ exportLoading ? "导出中..." : "导出 CSV" }}
         </button>
@@ -363,7 +368,7 @@
             <span class="option-label">{{ option.label }}</span>
             <span class="option-count">{{ option.count }}</span>
           </label>
-          <div v-if="!filterOptionsLoading && !visibleFilterOptions.length" class="excel-filter-empty">无可选值</div>
+          <div v-if="!filterOptionsLoading && !visibleFilterOptions.length" class="excel-filter-empty">无可选项</div>
         </div>
         <div class="excel-filter-footer">
           <button class="secondary-btn" @click="closeFilterMenu">取消</button>
@@ -412,6 +417,11 @@ import {
 } from "@/api/data";
 import TableTrendMiniChart from "@/components/TableTrendMiniChart.vue";
 import TrendDataModal from "@/components/TrendDataModal.vue";
+import {
+  CANADA_SOURCE_SEGMENT,
+  MARKET_CATEGORY_CANADA,
+  MARKET_CATEGORY_UNITED_STATES,
+} from "@/utils/marketCategory";
 import type { PgFilterOption, PgTrendPoint } from "@/types/data";
 
 const LONG_PRESS_MS = 220;
@@ -434,6 +444,7 @@ type TextFilterOp =
 
 type TextFilterRule = { op: TextFilterOp; value?: string };
 type TextFilterValue = string | TextFilterRule;
+type MarketFilterValue = "ALL" | "UNITED_STATES" | "CANADA";
 
 type ColumnDef = {
   key: string;
@@ -497,6 +508,7 @@ const error = ref("");
 const yearMonthOptions = ref<number[]>([]);
 const selectedYear = ref(0);
 const selectedMonth = ref(0);
+const selectedMarket = ref<MarketFilterValue>("ALL");
 const brandKeywordInput = ref("");
 const asinKeywordInput = ref("");
 
@@ -615,6 +627,26 @@ function cellText(value: unknown): string {
   return String(value);
 }
 
+function normalizeMarketQuery(value: unknown): MarketFilterValue {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return "ALL";
+  if (text === "canada") return "CANADA";
+  if (text === "united states" || text === "united_states" || text === "us") return "UNITED_STATES";
+  return "ALL";
+}
+
+function marketQueryValue(value: MarketFilterValue): string | undefined {
+  if (value === "CANADA") return MARKET_CATEGORY_CANADA;
+  if (value === "UNITED_STATES") return MARKET_CATEGORY_UNITED_STATES;
+  return undefined;
+}
+
+function marketTextFilterRule(): TextFilterRule | null {
+  if (selectedMarket.value === "CANADA") return { op: "contains", value: CANADA_SOURCE_SEGMENT };
+  if (selectedMarket.value === "UNITED_STATES") return { op: "not_contains", value: CANADA_SOURCE_SEGMENT };
+  return null;
+}
+
 function toNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
   const num = Number(value);
@@ -712,7 +744,7 @@ async function copyText(value: string): Promise<void> {
       document.body.removeChild(textarea);
       showCopyToast("标题已复制");
     } catch {
-      showCopyToast("复制失败");
+      showCopyToast("澶嶅埗澶辫触");
     }
   }
 }
@@ -762,7 +794,7 @@ function previewText(row: Record<string, unknown>, col: string): string {
 function openTrendModalFromRow(row: Record<string, unknown>, points: PgTrendPoint[]): void {
   if (!points.length) return;
   const title = String(row.title ?? row.asin ?? "").trim();
-  trendModalTitle.value = title ? `${title} 趋势数据` : "趋势数据";
+  trendModalTitle.value = title ? `${title} 瓒嬪娍鏁版嵁` : "瓒嬪娍鏁版嵁";
   trendModalPoints.value = points;
   trendModalQuery.value = String(row.keyword ?? row.word ?? row.title ?? row.asin ?? "").trim();
   trendModalOpen.value = true;
@@ -774,6 +806,7 @@ function openReport(): void {
     query: {
       year: selectedYear.value || undefined,
       month: selectedMonth.value || undefined,
+      market: marketQueryValue(selectedMarket.value),
       brand: brandKeywordInput.value || undefined,
       asin: asinKeywordInput.value || undefined,
     },
@@ -883,6 +916,12 @@ function normalizedTextFilters(): Record<string, unknown> {
     }
     const normalized = String(value.value ?? "").trim();
     if (normalized) output[key] = { op, value: normalized };
+  }
+  const marketRule = marketTextFilterRule();
+  if (marketRule) {
+    output.source_path = marketRule;
+  } else {
+    delete output.source_path;
   }
   return output;
 }
@@ -1015,7 +1054,7 @@ async function loadYearMonths(): Promise<void> {
   } catch (err) {
     console.error("loadYearMonths failed:", err);
     yearMonthOptions.value = [];
-    error.value = "年月筛选加载失败，请稍后重试";
+    error.value = "年月筛选加载失败，请稍后重试。";
   }
 }
 
@@ -1026,6 +1065,7 @@ function toValidQueryNumber(value: unknown): number {
 
 function applyInitialYearMonth(): void {
   const options = yearMonthOptions.value;
+  selectedMarket.value = normalizeMarketQuery(route.query.market);
   brandKeywordInput.value = String(route.query.brand || "").trim();
   asinKeywordInput.value = String(route.query.asin || "").trim();
   syncQuickSearchFilters();
@@ -1364,6 +1404,10 @@ watch(selectedMonth, () => {
   void reloadTable();
 });
 
+watch(selectedMarket, () => {
+  void reloadTable();
+});
+
 watch([sortBy, sortDir, pageSize], () => {
   void reloadTable();
 });
@@ -1408,8 +1452,8 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   align-items: end;
   flex-wrap: wrap;
-  margin-left: auto;
-  justify-content: flex-end;
+  margin-left: 0;
+  justify-content: flex-start;
 }
 
 .competitor-filters {
@@ -1426,6 +1470,33 @@ onBeforeUnmount(() => {
 
 .toolbar-filters select {
   min-width: 100px;
+}
+
+.market-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  margin-right: auto;
+}
+
+.market-switch-btn {
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #334155;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.market-switch-btn.active {
+  background: #1d4ed8;
+  color: #fff;
 }
 
 .toolbar-search-field input {
@@ -2116,3 +2187,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+
