@@ -198,8 +198,8 @@
       </section>
 
       <section class="report-grid report-grid-2">
-        <article class="report-panel"><div class="report-panel-header"><h3>品牌销售排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>品牌</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="(r, index) in brandRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
-        <article class="report-panel"><div class="report-panel-header"><h3>卖家销售排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>卖家</th><th>商品数</th><th>销量</th><th>销售额</th><th>销量占比</th></tr></thead><tbody><tr v-for="(r, index) in sellerRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>品牌销售额排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>品牌</th><th>商品数</th><th>销量</th><th>销售额</th><th>均价</th><th>销售额占比</th></tr></thead><tbody><tr v-for="(r, index) in brandRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatUnitPrice(r.amount, r.units) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
+        <article class="report-panel"><div class="report-panel-header"><h3>卖家销售额排行</h3></div><table class="report-table"><thead><tr><th>序号</th><th>卖家</th><th>商品数</th><th>销量</th><th>销售额</th><th>均价</th><th>销售额占比</th></tr></thead><tbody><tr v-for="(r, index) in sellerRank" :key="r.name"><td>{{ index + 1 }}</td><td>{{ r.name }}</td><td>{{ formatInteger(r.count) }}</td><td>{{ formatInteger(r.units) }}</td><td>{{ formatCurrency(r.amount) }}</td><td>{{ formatUnitPrice(r.amount, r.units) }}</td><td>{{ formatPercent(r.share) }}</td></tr></tbody></table></article>
       </section>
 
       <section class="report-grid report-grid-2">
@@ -563,7 +563,7 @@ const dateMs = (row: Row) => { const x = n(row.availabledate); if (x !== null) r
 const fmtYm = (value: number | null) => value ? `${Math.floor(value/100)}-${String(value%100).padStart(2,"0")}` : "-";
 const fi = (v: number | null) => v === null || Number.isNaN(v) ? "-" : Math.round(v).toLocaleString("en-US");
 const fd = (v: number | null, d = 1) => v === null || Number.isNaN(v) ? "-" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const fc = (v: number | null) => v === null || Number.isNaN(v) ? "-" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fc = (v: number | null, prefix = "$") => v === null || Number.isNaN(v) ? "-" : `${prefix}${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fp = (v: number | null) => v === null || Number.isNaN(v) ? "-" : `${(v*100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
 const fw = (v: number | null) => v === null || Number.isNaN(v) ? "-" : `${(v/10000).toLocaleString("en-US", { maximumFractionDigits: 1 })} 万美元`;
 const fwn = (v: number | null) => v === null || Number.isNaN(v) ? "-" : (v/10000).toLocaleString("en-US", { maximumFractionDigits: 1 });
@@ -575,10 +575,17 @@ function formatConcentrationAxisLabel(value: unknown, limit = 18): string {
   return `${text.slice(0, Math.max(limit - 1, 1))}…`;
 }
 const formatInteger = fi;
-const formatCurrency = fc;
+function currencyPrefix(): string {
+  return currentMarketPath.value === MARKET_CATEGORY_CANADA ? "C$" : "$";
+}
+const formatCurrency = (v: number | null) => fc(v, currencyPrefix());
 const formatPercent = fp;
 const formatWan = fw;
 const formatWanNumber = fwn;
+function formatUnitPrice(amount: number, units: number): string {
+  if (!units) return "-";
+  return formatCurrency(amount / units);
+}
 function normalizeMarketPath(value: unknown): string {
   return inferMarketCategory(value);
 }
@@ -663,7 +670,22 @@ const getMetricFormatter = (metricMode: ConcentrationMetricMode, barMetric: "uni
 const topShareLabel = (metricMode: ConcentrationMetricMode) => metricMode === "amount" ? "销售额占比" : "销量占比";
 const metric = computed(() => { const rows = snapshotRows.value, dates = rows.map(dateMs).filter((v): v is number => v !== null).sort((a,b)=>a-b), newRows = rows.filter(isNew), ratings = newRows.map(r=>n(r.rating)).filter((v): v is number => v !== null); return { total:rows.length, brands:new Set(rows.map(r=>t(r.brand)).filter(Boolean)).size, sellers:new Set(rows.map(r=>t(r.sellername)).filter(Boolean)).size, units:sum(rows.map(r=>n(r.totalunits))), amount:sum(rows.map(r=>n(r.totalamount))), avgBsr:avg(rows.map(r=>n(r.bsrrank))), avgPrice:avg(rows.map(r=>n(r.price))), avgReviewGrow:avg(rows.map(r=>n(r.reviewsdelta))), avgReviews:avg(rows.map(r=>n(r.reviews))), avgRating:avg(rows.map(r=>n(r.rating))), avgSellerCount:avg(rows.map(r=>n(r.sellers))), newRows, newCount:newRows.length, newRatio:rows.length ? newRows.length/rows.length : 0, newAvgPrice:avg(newRows.map(r=>n(r.price))), newAvgRating:avg(newRows.map(r=>n(r.rating))), newMax:ratings.length ? Math.max(...ratings) : null, newMin:ratings.length ? Math.min(...ratings) : null, newUnits:sum(newRows.map(r=>n(r.totalunits))), newAmount:sum(newRows.map(r=>n(r.totalamount))), firstDate:dates[0] ?? null, lastDate:dates.at(-1) ?? null, fbaRatio:rows.length ? rows.filter(r=>t(r.sellertype).toUpperCase()==="FBA").length/rows.length : 0, videoRatio:rows.length ? rows.filter(r=>yes(r.video)).length/rows.length : 0, ebcRatio:rows.length ? rows.filter(r=>yes(r.ebc)).length/rows.length : 0 }; });
 const topProducts = computed(() => [...snapshotRows.value].sort((a,b)=>(n(b.totalunits)||0)-(n(a.totalunits)||0)).slice(0, topProductCount.value));
-const brandRank = computed(() => group(snapshotRows.value, "brand").slice(0,10)), sellerRank = computed(() => group(snapshotRows.value, "sellername").slice(0,10));
+const brandRank = computed(() => {
+  const rows = group(snapshotRows.value, "brand");
+  const totalAmount = sum(rows.map((item) => item.amount));
+  return rows
+    .map((item) => ({ ...item, share: totalAmount ? item.amount / totalAmount : 0 }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 10);
+});
+const sellerRank = computed(() => {
+  const rows = group(snapshotRows.value, "sellername");
+  const totalAmount = sum(rows.map((item) => item.amount));
+  return rows
+    .map((item) => ({ ...item, share: totalAmount ? item.amount / totalAmount : 0 }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 10);
+});
 const productTop50Share = computed(() => {
   const total = productConcentrationMetric.value === "amount" ? metric.value.amount : metric.value.units;
   if (!total) return 0;
@@ -688,16 +710,16 @@ const sellerTop50Share = computed(() => {
     .slice(0, CONCENTRATION_TOP_LIMIT)
     .map((row) => sellerConcentrationMetric.value === "amount" ? row.amount : row.units)) / total;
 });
-const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"当月销量", value:fi(metric.value.units), sub:`销售额 ${fc(metric.value.amount)}` }, { label:"平均价格", value:fc(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
-const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"当月总销量", value:fi(metric.value.units) }, { label:"当月总销售额", value:fc(metric.value.amount) }, { label:"平均价格", value:fc(metric.value.avgPrice) }, { label:"当月评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
+const statCards = computed(() => [{ label:"样本商品数", value:fi(metric.value.total), sub:`品牌数 ${fi(metric.value.brands)}` }, { label:"当月销量", value:fi(metric.value.units), sub:`销售额 ${formatCurrency(metric.value.amount)}` }, { label:"平均价格", value:formatCurrency(metric.value.avgPrice), sub:`平均BSR ${fi(metric.value.avgBsr)}` }, { label:"平均评分", value:fd(metric.value.avgRating,2), sub:`平均评论数 ${fd(metric.value.avgReviews,0)}` }]);
+const overviewRows = computed<Metric[]>(() => [{ label:"样本商品数", value:fi(metric.value.total) }, { label:"样本品牌数/卖家数", value:`${fi(metric.value.brands)}/${fi(metric.value.sellers)}` }, { label:"平均BSR", value:fi(metric.value.avgBsr) }, { label:"当月总销量", value:fi(metric.value.units) }, { label:"当月总销售额", value:formatCurrency(metric.value.amount) }, { label:"平均价格", value:formatCurrency(metric.value.avgPrice) }, { label:"当月评论平均增长数", value:fd(metric.value.avgReviewGrow,1) }, { label:"平均评论数", value:fd(metric.value.avgReviews,0) }, { label:"平均星级", value:fd(metric.value.avgRating,1) }, { label:"平均卖家数", value:fd(metric.value.avgSellerCount,1) }]);
 const topRows = computed<Metric[]>(() => {
   const prefix = `销量前${topProductCount.value}商品`;
   return [
     { label:`${prefix}样本总数`, value:fi(topProducts.value.length) },
     { label:`${prefix}BSR均值`, value:fi(avg(topProducts.value.map(r=>n(r.bsrrank)))) },
     { label:`${prefix}当月总销量`, value:fi(sum(topProducts.value.map(r=>n(r.totalunits)))) },
-    { label:`${prefix}当月总销售额`, value:fc(sum(topProducts.value.map(r=>n(r.totalamount)))) },
-    { label:`${prefix}平均价格`, value:fc(avg(topProducts.value.map(r=>n(r.price)))) },
+    { label:`${prefix}当月总销售额`, value:formatCurrency(sum(topProducts.value.map(r=>n(r.totalamount)))) },
+    { label:`${prefix}平均价格`, value:formatCurrency(avg(topProducts.value.map(r=>n(r.price)))) },
     { label:`${prefix}当月评论平均增长数`, value:fd(avg(topProducts.value.map(r=>n(r.reviewsdelta))),1) },
     { label:`${prefix}平均评论数`, value:fd(avg(topProducts.value.map(r=>n(r.reviews))),0) },
     { label:`${prefix}平均星级`, value:fd(avg(topProducts.value.map(r=>n(r.rating))),1) },
@@ -709,9 +731,9 @@ const newRows = computed<Metric[]>(() => {
     { label:"新品数量", value:fi(metric.value.newCount) },
     { label:"新品占比", value:fp(metric.value.newRatio) },
     { label:"新品评分数(最高/平均/最低)", value:`${fd(metric.value.newMax,1)}/${fd(metric.value.newAvgRating,1)}/${fd(metric.value.newMin,1)}` },
-    { label:"新品平均价格", value:fc(metric.value.newAvgPrice) },
+    { label:"新品平均价格", value:formatCurrency(metric.value.newAvgPrice) },
     { label:`${prefix}当月总销量`, value:fi(metric.value.newUnits) },
-    { label:`${prefix}当月总销售额`, value:fc(metric.value.newAmount) },
+    { label:`${prefix}当月总销售额`, value:formatCurrency(metric.value.newAmount) },
     { label:"商品首次上架时间", value:fdate(metric.value.firstDate) },
     { label:"商品最新上架时间", value:fdate(metric.value.lastDate) },
   ];

@@ -195,12 +195,12 @@
                     </template>
 
                     <template v-else-if="col === 'totalamount'">
-                      <div class="metric-main">{{ formatCurrency(row.totalamount) }}</div>
+                      <div class="metric-main">{{ formatCurrency(row.totalamount, row.source_path) }}</div>
                     </template>
 
                     <template v-else-if="col === 'amzunit'">
                       <div class="metric-main">{{ formatCompact(row.amzunit) }}</div>
-                      <div class="metric-sub">{{ formatCurrency(row.subtotalamount) }}</div>
+                      <div class="metric-sub">{{ formatCurrency(row.subtotalamount, row.source_path) }}</div>
                     </template>
 
                     <template v-else-if="col === 'variations'">
@@ -208,7 +208,7 @@
                     </template>
 
                     <template v-else-if="col === 'price'">
-                      <div class="metric-main">{{ formatCurrency(row.price) }}</div>
+                      <div class="metric-main">{{ formatCurrency(row.price, row.source_path) }}</div>
                       <div class="metric-sub">{{ formatNumber(row.questions) }}</div>
                     </template>
 
@@ -223,7 +223,7 @@
                     </template>
 
                     <template v-else-if="col === 'fba'">
-                      <div class="metric-main">{{ formatCurrency(row.fba) }}</div>
+                      <div class="metric-main">{{ formatCurrency(row.fba, row.source_path) }}</div>
                       <div class="metric-sub">{{ formatPercent(row.profit) }}</div>
                     </template>
 
@@ -676,10 +676,16 @@ function formatCompact(value: unknown): string {
   return num.toLocaleString();
 }
 
-function formatCurrency(value: unknown): string {
+function currencyPrefix(sourcePath?: unknown): string {
+  if (selectedMarket.value === "CANADA") return "C$";
+  if (sourcePath != null && marketFromSourcePath(sourcePath) === "CANADA") return "C$";
+  return "$";
+}
+
+function formatCurrency(value: unknown, sourcePath?: unknown): string {
   const num = toNumber(value);
   if (num === null) return "-";
-  return `$${num.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `${currencyPrefix(sourcePath)}${num.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
 function formatPercent(value: unknown): string {
@@ -777,19 +783,19 @@ function previewText(row: Record<string, unknown>, col: string): string {
     case "totalunits":
       return formatNumber(row.totalunits);
     case "totalamount":
-      return formatCurrency(row.totalamount);
+      return formatCurrency(row.totalamount, row.source_path);
     case "amzunit":
       return formatCompact(row.amzunit);
     case "variations":
       return formatNumber(row.variations);
     case "price":
-      return formatCurrency(row.price);
+      return formatCurrency(row.price, row.source_path);
     case "reviews":
       return formatNumber(row.reviews);
     case "rating":
       return formatRating(row.rating);
     case "fba":
-      return formatCurrency(row.fba);
+      return formatCurrency(row.fba, row.source_path);
     case "availabledate":
       return formatDate(row.availabledate);
     case "delivery":
