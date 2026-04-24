@@ -147,7 +147,7 @@
                             <a
                               v-if="cellText(row.asin)"
                               class="product-meta-link"
-                              :href="amazonUrl(row.asin)"
+                              :href="amazonUrl(row.asin, row.source_path)"
                               target="_blank"
                               rel="noopener noreferrer"
                             >
@@ -159,7 +159,7 @@
                             <span class="product-meta-label">父ASIN:</span>
                             <a
                               class="product-meta-link"
-                              :href="amazonUrl(row.parent)"
+                              :href="amazonUrl(row.parent, row.source_path)"
                               target="_blank"
                               rel="noopener noreferrer"
                             >
@@ -470,7 +470,6 @@ const textFilterOpOptions: Array<{ value: TextFilterOp; label: string }> = [
 const COLUMN_DEFS: ColumnDef[] = [
   { key: "product", label: "产品信息", width: "23%", filterField: "title" },
   { key: "bsrrank", label: "大类BSR", width: "5%", filterField: "bsrrank" },
-  { key: "trend", label: "销量趋势", width: "12%" },
   { key: "totalunits", label: ["销量(父)", "增长率"], width: "6%", filterField: "totalunits" },
   { key: "totalamount", label: "销售额", width: "7%", filterField: "totalamount" },
   { key: "amzunit", label: ["子体销量", "子体销售额"], width: "7%", filterField: "amzunit" },
@@ -481,11 +480,13 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: "fba", label: ["FBA", "毛利率"], width: "5%", filterField: "fba" },
   { key: "availabledate", label: "上架时间", width: "7%", filterField: "availabledate" },
   { key: "delivery", label: ["配送", "卖家国家"], width: "7.5%", filterField: "sellernation" },
+  { key: "trend", label: "销量趋势", width: "12%" },
 ];
 
 const COLUMN_MAP = new Map(COLUMN_DEFS.map((item) => [item.key, item]));
 
 const sortFieldOptions = [
+  { value: "amzunit", label: "子体销量" },
   { value: "totalunits", label: "销量" },
   { value: "totalamount", label: "销售额" },
   { value: "bsrrank", label: "BSR" },
@@ -721,9 +722,16 @@ function formatDays(value: unknown): string {
   return `${num}天`;
 }
 
-function amazonUrl(asin: unknown): string {
+function marketFromSourcePath(sourcePath: unknown): "CANADA" | "UNITED_STATES" {
+  const source = cellText(sourcePath).toLowerCase();
+  return source.includes(CANADA_SOURCE_SEGMENT.toLowerCase()) ? "CANADA" : "UNITED_STATES";
+}
+
+function amazonUrl(asin: unknown, sourcePath?: unknown): string {
   const value = cellText(asin).trim();
-  return value ? `https://www.amazon.com/dp/${encodeURIComponent(value)}` : "https://www.amazon.com";
+  const market = marketFromSourcePath(sourcePath);
+  const domain = market === "CANADA" ? "www.amazon.ca" : "www.amazon.com";
+  return value ? `https://${domain}/dp/${encodeURIComponent(value)}` : `https://${domain}`;
 }
 
 async function copyText(value: string): Promise<void> {

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 
 from .tagger import Tagger, TagResult
@@ -72,6 +72,49 @@ def _safe_float(value: Any) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def _round_percent_display(value: float) -> int:
+    if value >= 0:
+        return int(value * 100 + 0.5)
+    return -int(abs(value) * 100 + 0.5)
+
+
+def _lerp(a: int, b: int, t: float) -> int:
+    t = max(0.0, min(1.0, t))
+    return int(round(a + (b - a) * t))
+
+
+def _pct_to_fill_hex(pct: int) -> str:
+    # One color block per displayed percent (same percent => same color).
+    # Palette tuned to match the reference sheet: vivid green -> yellow -> orange -> red.
+    v = max(0, min(190, int(pct)))
+    anchors: list[tuple[int, tuple[int, int, int]]] = [
+        (0, (15, 179, 74)),     # 0FB34A
+        (10, (127, 201, 101)),  # 7FC965
+        (20, (230, 216, 122)),  # E6D87A
+        (40, (241, 197, 108)),  # F1C56C
+        (70, (245, 164, 89)),   # F5A459
+        (100, (255, 128, 69)),  # FF8045
+        (130, (255, 86, 54)),   # FF5636
+        (160, (255, 46, 35)),   # FF2E23
+        (190, (255, 0, 0)),     # FF0000
+    ]
+    if v <= anchors[0][0]:
+        r, g, b = anchors[0][1]
+        return f"{r:02X}{g:02X}{b:02X}"
+    for idx in range(1, len(anchors)):
+        left_v, left_c = anchors[idx - 1]
+        right_v, right_c = anchors[idx]
+        if v <= right_v:
+            span = max(1, right_v - left_v)
+            t = (v - left_v) / span
+            r = _lerp(left_c[0], right_c[0], t)
+            g = _lerp(left_c[1], right_c[1], t)
+            b = _lerp(left_c[2], right_c[2], t)
+            return f"{r:02X}{g:02X}{b:02X}"
+    r, g, b = anchors[-1][1]
+    return f"{r:02X}{g:02X}{b:02X}"
 
 
 def split_words(
@@ -452,7 +495,9 @@ def build_table2_with_options(
         if denominator > 0 and total > 0:
             weight = round((total / denominator) * (4.3 * exposure_sum) * 10, 0)
             if total:
-                ratio = weight / total
+                raw_ratio = weight / total
+                # Quantize to integer percentage to ensure same displayed percent uses same color.
+                ratio = round(raw_ratio, 2)
 
         tag = tags.get(word) or TagResult(tag_label="解析失败", reason=f"“{word}”，无缓存且未启用AI。")
         output.append(
@@ -545,21 +590,9 @@ def write_output_with_options(
         cell_val = ws[f"G{idx}"].value
         if isinstance(cell_val, (int, float)):
             ws[f"G{idx}"].number_format = "0%"
-    if last_row >= 4:
-        ws.conditional_formatting.add(
-            f"G4:G{last_row}",
-            ColorScaleRule(
-                start_type="num",
-                start_value=0,
-                start_color="00B050",
-                mid_type="num",
-                mid_value=0.5,
-                mid_color="FFD966",
-                end_type="num",
-                end_value=1.5,
-                end_color="FF0000",
-            ),
-        )
+            pct = _round_percent_display(float(cell_val))
+            fill_hex = _pct_to_fill_hex(pct)
+            ws[f"G{idx}"].fill = PatternFill(fill_type="solid", start_color=fill_hex, end_color=fill_hex)
 
     # Auto-fit column widths based on rendered text length.
     for col_idx in range(1, len(columns) + 1):
