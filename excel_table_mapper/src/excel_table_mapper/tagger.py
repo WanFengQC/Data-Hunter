@@ -333,6 +333,148 @@ class Tagger:
             }
         return output
 
+    def list_verified_cache(self, keyword: str | None = None, limit: int = 5000) -> list[dict[str, Any]]:
+        limit_val = max(1, min(int(limit or 5000), 20000))
+        keyword_text = _norm(keyword or "")
+
+        if self.pg.enabled:
+            self._ensure_pg_table()
+            with self._connect_pg() as conn:
+                with conn.cursor() as cur:
+                    if keyword_text:
+                        like = f"%{keyword_text}%"
+                        cur.execute(
+                            f"""
+                            SELECT word, tag_label, tag_reason, updated_at
+                            FROM {self.pg.schema}.{self.pg_verified_table}
+                            WHERE word ILIKE %s
+                               OR tag_label ILIKE %s
+                               OR COALESCE(tag_reason, '') ILIKE %s
+                            ORDER BY updated_at DESC
+                            LIMIT %s
+                            """,
+                            (like, like, like, limit_val),
+                        )
+                    else:
+                        cur.execute(
+                            f"""
+                            SELECT word, tag_label, tag_reason, updated_at
+                            FROM {self.pg.schema}.{self.pg_verified_table}
+                            ORDER BY updated_at DESC
+                            LIMIT %s
+                            """,
+                            (limit_val,),
+                        )
+                    rows = cur.fetchall()
+            items = [
+                {
+                    "word": str(row[0] or ""),
+                    "tag_label": str(row[1] or ""),
+                    "reason": str(row[2] or ""),
+                    "updated_at": row[3],
+                }
+                for row in rows
+                if _norm(row[0])
+            ]
+            if items:
+                self._upsert_local(
+                    [
+                        {
+                            "word": item["word"],
+                            "tag_label": item["tag_label"],
+                            "reason": item["reason"],
+                        }
+                        for item in items
+                    ]
+                )
+            return items
+
+        with self._sqlite() as conn:
+            if keyword_text:
+                like = f"%{keyword_text}%"
+                rows = conn.execute(
+                    """
+                    SELECT word, tag_label, reason, updated_at
+                    FROM word_cache
+                    WHERE tag_label IS NOT NULL
+                      AND (
+                        lower(word) LIKE ?
+                        OR lower(COALESCE(tag_label, '')) LIKE ?
+                        OR lower(COALESCE(reason, '')) LIKE ?
+                      )
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (like, like, like, limit_val),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT word, tag_label, reason, updated_at
+                    FROM word_cache
+                    WHERE tag_label IS NOT NULL
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit_val,),
+                ).fetchall()
+        return [
+            {
+                "word": str(row["word"] or ""),
+                "tag_label": str(row["tag_label"] or ""),
+                "reason": str(row["reason"] or ""),
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+            if _norm(row["word"])
+        ]
+
+    def update_verified_cache_entry(self, word: str, tag_label: str, reason: str) -> None:
+        norm_word = _norm(word)
+        if not norm_word:
+            raise ValueError("word is required")
+        label = str(tag_label or "").strip()
+        if not label:
+            raise ValueError("tag_label is required")
+        fixed_reason = _ensure_reason_format(norm_word, str(reason or "").strip())
+
+        if self.pg.enabled:
+            self._ensure_pg_table()
+            with self._connect_pg() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        INSERT INTO {self.pg.schema}.{self.pg_verified_table}
+                        (word, tag_label, tag_reason, promoted_at, updated_at)
+                        VALUES (%s, %s, %s, NOW(), NOW())
+                        ON CONFLICT (word)
+                        DO UPDATE SET
+                            tag_label = EXCLUDED.tag_label,
+                            tag_reason = EXCLUDED.tag_reason,
+                            updated_at = NOW()
+                        """,
+                        (norm_word, label, fixed_reason),
+                    )
+                    cur.execute(
+                        f"""
+                        UPDATE {self.pg.schema}.{self.pg.table}
+                        SET tag_label = %s, tag_reason = %s, updated_at = NOW()
+                        WHERE word = %s
+                        """,
+                        (label, fixed_reason, norm_word),
+                    )
+                conn.commit()
+
+        self._upsert_local(
+            [
+                {
+                    "word": norm_word,
+                    "tag_label": label,
+                    "reason": fixed_reason,
+                }
+            ]
+        )
+
     def _local_phrase_norm_map_all_active(self) -> dict[str, str]:
         with self._sqlite() as conn:
             rows = conn.execute(

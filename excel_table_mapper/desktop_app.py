@@ -56,6 +56,7 @@ DEFAULT_AI_MODEL = "gpt-5.4"
 DEFAULT_AI_BASE_URL = "https://api.uniapi.io"
 DEFAULT_OPENAI_API_KEY = "sk-f93c5cc7df984f2ea501017091e1e633"
 DEFAULT_BATCH_SIZE = 50
+TAG_LABEL_OPTIONS = ("1核心词", "2外形", "3属性", "4痛点", "5规格", "6受众", "7场景", "8品牌", "无效词")
 
 
 def _runtime_base_dir() -> Path:
@@ -271,6 +272,7 @@ class App:
         ttk.Label(mode_bar, text="运行方式：").pack(side=tk.LEFT)
         ttk.Label(mode_bar, textvariable=self.mode_desc_var).pack(side=tk.LEFT)
         ttk.Button(mode_bar, text="配置", command=self._open_settings_dialog).pack(side=tk.RIGHT)
+        ttk.Button(mode_bar, text="已验证管理", command=self._open_verified_manager).pack(side=tk.RIGHT, padx=(0, 8))
         ttk.Button(mode_bar, text="归一化管理", command=self._open_norm_manager).pack(side=tk.RIGHT, padx=(0, 8))
 
         row += 1
@@ -284,7 +286,7 @@ class App:
         ttk.Checkbutton(ai_bar, text="启用复数归一化", variable=self.enable_plural_normalization_var).pack(
             side=tk.LEFT, padx=(10, 0)
         )
-        ttk.Checkbutton(ai_bar, text="Debug模式", variable=self.debug_mode_var, command=self._refresh_tree_columns).pack(
+        ttk.Checkbutton(ai_bar, text="查看导入短语", variable=self.debug_mode_var, command=self._refresh_tree_columns).pack(
             side=tk.LEFT, padx=(10, 0)
         )
 
@@ -574,6 +576,175 @@ class App:
         build_tab(phrase_tab, plural_mode=False)
         build_tab(plural_tab, plural_mode=True)
 
+    def _open_verified_manager(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("已验证管理")
+        win.geometry("1060x640")
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        filter_keyword_var = tk.StringVar(value="")
+        status_var = tk.StringVar(value="")
+        form_word_var = tk.StringVar(value="")
+        form_label_var = tk.StringVar(value="")
+        rows_holder: dict[str, list[dict]] = {"rows": []}
+        local_q: queue.Queue[tuple[str, dict]] = queue.Queue()
+
+        top = ttk.Frame(frame)
+        top.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(top, text="关键词").pack(side=tk.LEFT)
+        ttk.Entry(top, textvariable=filter_keyword_var, width=34).pack(side=tk.LEFT, padx=(6, 8))
+
+        columns = ("word", "tag_label", "reason", "updated_at")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=18, selectmode="browse")
+        headers = {"word": "单词", "tag_label": "标签", "reason": "原因", "updated_at": "更新时间"}
+        widths = {"word": 180, "tag_label": 120, "reason": 520, "updated_at": 180}
+        for col in columns:
+            tree.heading(col, text=headers[col])
+            tree.column(col, width=widths[col], anchor="center")
+        tree.column("reason", anchor="w")
+        tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        y_scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        y_scroll.pack(fill=tk.Y, side=tk.RIGHT)
+        tree.configure(yscrollcommand=y_scroll.set)
+
+        form = ttk.LabelFrame(frame, text="编辑选中项", padding=10)
+        form.pack(fill=tk.X, pady=(10, 6))
+        ttk.Label(form, text="单词").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(form, textvariable=form_word_var, state="readonly").grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="标签").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Combobox(
+            form,
+            textvariable=form_label_var,
+            state="readonly",
+            values=TAG_LABEL_OPTIONS,
+        ).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="原因").grid(row=2, column=0, sticky="nw", padx=(0, 8), pady=4)
+        reason_box = tk.Text(form, height=4, wrap="word")
+        reason_box.grid(row=2, column=1, sticky="ew", pady=4)
+        form.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, textvariable=status_var).pack(anchor="w", pady=(2, 0))
+        btns = ttk.Frame(frame)
+        btns.pack(fill=tk.X, pady=(6, 0))
+
+        def clear_form() -> None:
+            form_word_var.set("")
+            form_label_var.set("")
+            reason_box.delete("1.0", tk.END)
+
+        def on_pick(_event=None) -> None:
+            picked = tree.selection()
+            if not picked:
+                clear_form()
+                return
+            vals = tree.item(picked[0], "values")
+            if not vals:
+                clear_form()
+                return
+            form_word_var.set(str(vals[0] or ""))
+            form_label_var.set(str(vals[1] or ""))
+            reason_box.delete("1.0", tk.END)
+            reason_box.insert("1.0", str(vals[2] or ""))
+
+        tree.bind("<<TreeviewSelect>>", on_pick)
+
+        def redraw() -> None:
+            for item in tree.get_children():
+                tree.delete(item)
+            shown = 0
+            for row in rows_holder["rows"]:
+                tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        row.get("word", ""),
+                        row.get("tag_label", ""),
+                        row.get("reason", ""),
+                        row.get("updated_at", ""),
+                    ),
+                )
+                shown += 1
+            status_var.set(f"共 {shown} 条")
+            clear_form()
+
+        def refresh_rows() -> None:
+            status_var.set("加载中...")
+            keyword = filter_keyword_var.get().strip()
+
+            def worker() -> None:
+                try:
+                    tagger = self._build_tagger(enable_ai=False)
+                    rows = tagger.list_verified_cache(keyword=keyword, limit=10000)
+                    local_q.put(("verified_rows", {"rows": rows}))
+                except Exception as exc:
+                    local_q.put(("verified_error", {"error": str(exc)}))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+            def poll() -> None:
+                try:
+                    event, data = local_q.get_nowait()
+                except queue.Empty:
+                    win.after(120, poll)
+                    return
+                if event == "verified_error":
+                    status_var.set(f"加载失败：{data.get('error', '')}")
+                    messagebox.showerror("错误", str(data.get("error", "")))
+                    return
+                rows_holder["rows"] = list(data.get("rows", []))
+                redraw()
+
+            win.after(120, poll)
+
+        def save_current() -> None:
+            word = form_word_var.get().strip()
+            label = form_label_var.get().strip()
+            reason = reason_box.get("1.0", tk.END).strip()
+            if not word:
+                messagebox.showinfo("提示", "请先在列表中选择一条。")
+                return
+            if not label:
+                messagebox.showerror("错误", "标签不能为空。")
+                return
+            if not reason:
+                messagebox.showerror("错误", "原因不能为空。")
+                return
+            status_var.set("保存中...")
+
+            def worker() -> None:
+                try:
+                    tagger = self._build_tagger(enable_ai=False)
+                    tagger.update_verified_cache_entry(word=word, tag_label=label, reason=reason)
+                    local_q.put(("verified_saved", {"word": word}))
+                except Exception as exc:
+                    local_q.put(("verified_save_error", {"error": str(exc)}))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+            def poll() -> None:
+                try:
+                    event, data = local_q.get_nowait()
+                except queue.Empty:
+                    win.after(120, poll)
+                    return
+                if event == "verified_save_error":
+                    status_var.set(f"保存失败：{data.get('error', '')}")
+                    messagebox.showerror("错误", str(data.get("error", "")))
+                    return
+                status_var.set(f"保存成功：{data.get('word', '')}")
+                refresh_rows()
+
+            win.after(120, poll)
+
+        ttk.Button(top, text="搜索", command=refresh_rows).pack(side=tk.LEFT)
+        ttk.Button(btns, text="刷新", command=refresh_rows).pack(side=tk.LEFT)
+        ttk.Button(btns, text="保存修改", command=save_current).pack(side=tk.LEFT, padx=(8, 0))
+        refresh_rows()
+
     def _confirm_normalization_candidates(
         self,
         tagger: Tagger,
@@ -751,6 +922,134 @@ class App:
         win.protocol("WM_DELETE_WINDOW", cancel_processing)
         self.root.wait_window(win)
         return bool(result["continue"])
+
+    def _confirm_runtime_plural_candidates(self, candidates: list[dict]) -> dict[str, str] | None:
+        pending = [x for x in candidates if str(x.get("status", "")).lower() == "pending"]
+        if not pending:
+            return {}
+
+        win = tk.Toplevel(self.root)
+        win.title("复数归一化确认（仅本次生效）")
+        win.geometry("880x520")
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=f"本次发现待确认复数归一化 {len(pending)} 条（不入库）。").pack(anchor="w", pady=(0, 8))
+
+        checked_ids: set[str] = set()
+        result: dict[str, str] | None = {}
+        cols = ("checked", "raw_phrase", "normalized_phrase", "hit_count", "confidence")
+        tree = ttk.Treeview(frame, columns=cols, show="headings", height=18, selectmode="extended")
+        tree.heading("checked", text="☐")
+        tree.heading("raw_phrase", text="原短语")
+        tree.heading("normalized_phrase", text="归一短语")
+        tree.heading("hit_count", text="累计")
+        tree.heading("confidence", text="置信度")
+        tree.column("checked", width=46, anchor="center", stretch=False)
+        tree.column("raw_phrase", width=260, anchor="center")
+        tree.column("normalized_phrase", width=260, anchor="center")
+        tree.column("hit_count", width=100, anchor="center")
+        tree.column("confidence", width=120, anchor="center")
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        status_var = tk.StringVar(value="")
+
+        for row in pending[:5000]:
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    "☐",
+                    str(row.get("raw_phrase", "")),
+                    str(row.get("normalized_phrase", "")),
+                    row.get("hit_count", ""),
+                    row.get("confidence", ""),
+                ),
+            )
+
+        def _set_row_checked(iid: str, checked: bool) -> None:
+            if checked:
+                checked_ids.add(iid)
+            else:
+                checked_ids.discard(iid)
+            vals = list(tree.item(iid, "values"))
+            if vals:
+                vals[0] = "☑" if checked else "☐"
+                tree.item(iid, values=vals)
+
+        def _refresh_checked_header() -> None:
+            children = tree.get_children()
+            if children and all(iid in checked_ids for iid in children):
+                tree.heading("checked", text="☑")
+            else:
+                tree.heading("checked", text="☐")
+
+        def _refresh_status() -> None:
+            total = len(tree.get_children())
+            selected = len([iid for iid in checked_ids if iid in tree.get_children()])
+            status_var.set(f"共 {total} 条，已选中 {selected} 条")
+
+        def _toggle_all_checked() -> None:
+            children = tree.get_children()
+            if not children:
+                return
+            all_checked = all(iid in checked_ids for iid in children)
+            for iid in children:
+                _set_row_checked(iid, not all_checked)
+            _refresh_checked_header()
+            _refresh_status()
+
+        tree.heading("checked", text="☐", command=_toggle_all_checked)
+
+        def _on_tree_click(event) -> str | None:
+            region = tree.identify("region", event.x, event.y)
+            column = tree.identify_column(event.x)
+            row_id = tree.identify_row(event.y)
+            if region == "cell" and column == "#1" and row_id:
+                _set_row_checked(row_id, row_id not in checked_ids)
+                _refresh_checked_header()
+                _refresh_status()
+                return "break"
+            return None
+
+        tree.bind("<Button-1>", _on_tree_click, add="+")
+        _refresh_status()
+
+        bar = ttk.Frame(frame)
+        bar.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(bar, textvariable=status_var).pack(side=tk.LEFT)
+
+        def _collect_selected() -> dict[str, str]:
+            out: dict[str, str] = {}
+            for iid in tree.get_children():
+                if iid not in checked_ids:
+                    continue
+                vals = tree.item(iid, "values")
+                if not vals or len(vals) < 3:
+                    continue
+                raw_phrase = str(vals[1] or "").strip().lower()
+                normalized_phrase = str(vals[2] or "").strip().lower()
+                if raw_phrase and normalized_phrase and raw_phrase != normalized_phrase:
+                    out[raw_phrase] = normalized_phrase
+            return out
+
+        def _continue_processing() -> None:
+            nonlocal result
+            result = _collect_selected()
+            win.destroy()
+
+        def _cancel_processing() -> None:
+            nonlocal result
+            result = None
+            win.destroy()
+
+        ttk.Button(bar, text="继续处理", command=_continue_processing).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(bar, text="取消处理", command=_cancel_processing).pack(side=tk.RIGHT)
+        win.protocol("WM_DELETE_WINDOW", _cancel_processing)
+        self.root.wait_window(win)
+        return result
 
     def _load_sheets(self, path: Path) -> None:
         if path.suffix.lower() not in {".xlsx", ".xlsm"}:
@@ -1244,16 +1543,14 @@ class App:
                     source_scope=source_scope,
                 )
                 if plural_candidates:
-                    tagger_pre.record_phrase_normalization_candidates(plural_candidates)
-                    if not self._confirm_normalization_candidates(
-                        tagger_pre,
-                        plural_candidates,
-                        dialog_title="复数归一化确认",
-                        source_prefixes=("auto_discovery_plural",),
-                    ):
+                    approved_plural_map = self._confirm_runtime_plural_candidates(plural_candidates)
+                    if approved_plural_map is None:
                         self.status_var.set("已取消处理")
                         return
-                phrase_map = tagger_pre.load_phrase_normalization_map()
+                    if approved_plural_map:
+                        merged_map = dict(phrase_map)
+                        merged_map.update(approved_plural_map)
+                        phrase_map = merged_map
 
             normalized = normalize_input_rows_with_map(raw_rows, DEFAULT_STOPWORDS, phrase_map)
         except Exception as exc:

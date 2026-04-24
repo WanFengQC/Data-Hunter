@@ -44,6 +44,14 @@
           >
             Stuffed Animals & Teddy Bears
           </button>
+          <button
+            type="button"
+            class="pounds-segmented-btn"
+            :class="{ active: datasetMode === 'animal_pillow_ca_child' }"
+            @click="datasetMode = 'animal_pillow_ca_child'"
+          >
+            Animal & Pillow（CA）
+          </button>
         </div>
 
         <label class="pounds-field">
@@ -230,7 +238,7 @@ import type {
   WeightedBlanketsPoundsSummaryResponse,
 } from "@/types/data";
 
-type DatasetMode = "weighted_blankets" | "stuffed_animals_child";
+type DatasetMode = "weighted_blankets" | "stuffed_animals_child" | "animal_pillow_ca_child";
 
 const DATASET_CONFIG: Record<DatasetMode, { table: string; label: string }> = {
   weighted_blankets: {
@@ -240,6 +248,10 @@ const DATASET_CONFIG: Record<DatasetMode, { table: string; label: string }> = {
   stuffed_animals_child: {
     table: "stuffed_animals_teddy_bears_child_competitor_items",
     label: "Stuffed Animals & Teddy Bears",
+  },
+  animal_pillow_ca_child: {
+    table: "animal_pillow_ca_child_competitor_items",
+    label: "Animal & Pillow (CA)",
   },
 };
 
@@ -270,7 +282,7 @@ const effectiveViewMode = computed<"yearly" | "monthly">(() =>
   selectedMonth.value ? "monthly" : "yearly"
 );
 const currentBucketStep = computed<number | undefined>(() =>
-  datasetMode.value === "stuffed_animals_child" ? 0.5 : undefined
+  datasetMode.value === "stuffed_animals_child" || datasetMode.value === "animal_pillow_ca_child" ? 0.5 : undefined
 );
 
 const yearOptions = computed(() =>

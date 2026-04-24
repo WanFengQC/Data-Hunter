@@ -348,9 +348,11 @@ def discover_plural_normalization_candidates(
     for variants in singular_grouped.values():
         if len(variants) < 2:
             continue
+        # Keep the higher-frequency form as canonical (single/plural is not forced).
+        # Exposure is only used as a tie-breaker.
         ranked = sorted(
             variants.items(),
-            key=lambda kv: (kv[1]["exposure"], kv[1]["count"], -len(kv[0])),
+            key=lambda kv: (kv[1]["count"], kv[1]["exposure"], -len(kv[0])),
             reverse=True,
         )
         canonical_phrase, canonical_stats = ranked[0]
